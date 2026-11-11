@@ -50,7 +50,7 @@ def synth_bars(tf_minutes: int, n: int, seed: int = 7) -> pd.DataFrame:
     """Deterministic XAUUSD-like OHLCV. Latency is data-independent; shape is not."""
     rng = np.random.default_rng(seed)
     idx = pd.date_range("2026-01-02", periods=n * 2, freq=f"{tf_minutes}min")
-    idx = idx[idx.dayofweek < 5][:n]
+    idx = idx[idx.day_of_week < 5][:n]
 
     scale = np.sqrt(tf_minutes / 60.0)
     ret = rng.normal(0.0, 0.0012 * scale, n)
@@ -80,14 +80,24 @@ def build_future_timestamps(last_time: pd.Timestamp, tf_minutes: int, horizon: i
     step = pd.Timedelta(minutes=tf_minutes)
     while len(out) < horizon:
         t = t + step
-        if t.dayofweek < 5:  # skip weekends, like a real symbol
+        if t.day_of_week < 5:  # skip weekends, like a real symbol
             out.append(t)
     return pd.Series(out)
 
 
-def run(model_name: str, tf: str, lookback: int, horizon: int, runs: int, samples: int) -> dict:
+def run(
+    model_name: str,
+    tf: str,
+    lookback: int,
+    horizon: int,
+    runs: int,
+    samples: int,
+    threads: int | None = None,
+) -> dict:
     tok_id, mdl_id, max_context = MODELS[model_name]
     tf_minutes = TF_MINUTES[tf]
+    if threads:
+        torch.set_num_threads(threads)
 
     print(f"[load] {mdl_id} (+ {tok_id}) ...", flush=True)
     t0 = time.perf_counter()
@@ -154,10 +164,13 @@ def main() -> None:
     p.add_argument("--horizon", type=int, default=12)
     p.add_argument("--runs", type=int, default=3)
     p.add_argument("--samples", type=int, default=25)
+    p.add_argument("--threads", type=int, default=None, help="torch intra-op threads (default: torch chooses)")
     p.add_argument("--out", default=str(Path(__file__).with_name("out")))
     args = p.parse_args()
 
-    result = run(args.model, args.tf, args.lookback, args.horizon, args.runs, args.samples)
+    result = run(
+        args.model, args.tf, args.lookback, args.horizon, args.runs, args.samples, args.threads
+    )
 
     out_dir = Path(args.out)
     out_dir.mkdir(exist_ok=True)
