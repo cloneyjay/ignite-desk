@@ -1,0 +1,9 @@
+# P0 spike dependencies. Deliberately unpinned: Python 3.14 needs current wheels.
+numpy
+pandas
+torch
+einops
+huggingface_hub
+safetensors
+tqdm
+psutil

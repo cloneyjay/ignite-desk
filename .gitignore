@@ -1,0 +1,37 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Runtime data (never commit)
+data/
+*.db
+*.sqlite
+*.sqlite3
+logs/
+spikes/**/out/
+spikes/**/*.jsonl
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Model cache (downloaded from Hugging Face)
+models/
+.cache/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
