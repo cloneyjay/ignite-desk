@@ -521,6 +521,188 @@ class Store:
         ).fetchall()
         return [self._agent_run_row(row) for row in rows]
 
+    # ---------------------------------------------------------------- agent config
+
+    def agent_config(self) -> dict[str, Any] | None:
+        row = self._conn.execute("SELECT * FROM agent_config WHERE key='global'").fetchone()
+        return dict(row) if row else None
+
+    def set_agent_config(self, enabled: bool, config_json: str) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO agent_config (key, enabled, config_json, updated_at)
+            VALUES ('global', ?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+                enabled=excluded.enabled,
+                config_json=excluded.config_json,
+                updated_at=excluded.updated_at
+            """,
+            (int(enabled), config_json, utc_now()),
+        )
+        self._conn.commit()
+
+    # ---------------------------------------------------------------- agent decisions
+
+    def insert_agent_decision(self, decision: dict[str, Any]) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO agent_decisions (
+                id, created_at, symbol, timeframe, analysis_id, signal_side,
+                p_up, edge_atr, decision, confidence, reasoning, executed,
+                execution_error, draft_id, attribution_json, fundamental_json,
+                technical_json, risk_json
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                decision["id"],
+                decision["created_at"],
+                decision["symbol"],
+                decision["timeframe"],
+                decision.get("analysis_id"),
+                decision["signal_side"],
+                decision.get("p_up"),
+                decision.get("edge_atr"),
+                decision["decision"],
+                decision.get("confidence"),
+                decision.get("reasoning"),
+                int(decision.get("executed", False)),
+                decision.get("execution_error"),
+                decision.get("draft_id"),
+                decision.get("attribution_json"),
+                decision.get("fundamental_json"),
+                decision.get("technical_json"),
+                decision.get("risk_json"),
+            ),
+        )
+        self._conn.commit()
+
+    @staticmethod
+    def _agent_decision_row(row: sqlite3.Row) -> dict[str, Any]:
+        decision = dict(row)
+        for key in ("attribution_json", "fundamental_json", "technical_json", "risk_json"):
+            raw = decision.pop(key, None)
+            decision[key.replace("_json", "")] = json.loads(raw) if raw else None
+        decision["executed"] = bool(decision["executed"])
+        return decision
+
+    def agent_decisions(self, limit: int = 100, symbol: str | None = None) -> list[dict[str, Any]]:
+        if symbol:
+            rows = self._conn.execute(
+                "SELECT * FROM agent_decisions WHERE symbol=? ORDER BY created_at DESC LIMIT ?",
+                (symbol, limit),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM agent_decisions ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [self._agent_decision_row(row) for row in rows]
+
+    def latest_agent_decision(self, symbol: str, timeframe: str) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            "SELECT * FROM agent_decisions WHERE symbol=? AND timeframe=? ORDER BY created_at DESC LIMIT 1",
+            (symbol, timeframe),
+        ).fetchone()
+        return self._agent_decision_row(row) if row else None
+
+    # ---------------------------------------------------------------- agent positions
+
+    def upsert_agent_position(self, pos: dict[str, Any]) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO agent_positions (
+                ticket, symbol, side, entry_price, volume, sl, tp, opened_at,
+                managed_by_agent, trail_sl, scale_in_count, scale_out_count,
+                max_favourable_atr, max_adverse_atr, last_managed_at,
+                closed_at, close_reason, realised_pnl, r_multiple
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(ticket) DO UPDATE SET
+                symbol=excluded.symbol,
+                side=excluded.side,
+                entry_price=excluded.entry_price,
+                volume=excluded.volume,
+                sl=excluded.sl,
+                tp=excluded.tp,
+                managed_by_agent=excluded.managed_by_agent,
+                trail_sl=excluded.trail_sl,
+                scale_in_count=excluded.scale_in_count,
+                scale_out_count=excluded.scale_out_count,
+                max_favourable_atr=excluded.max_favourable_atr,
+                max_adverse_atr=excluded.max_adverse_atr,
+                last_managed_at=excluded.last_managed_at,
+                closed_at=excluded.closed_at,
+                close_reason=excluded.close_reason,
+                realised_pnl=excluded.realised_pnl,
+                r_multiple=excluded.r_multiple
+            """,
+            (
+                pos["ticket"],
+                pos["symbol"],
+                pos["side"],
+                pos["entry_price"],
+                pos["volume"],
+                pos.get("sl"),
+                pos.get("tp"),
+                pos["opened_at"],
+                int(pos.get("managed_by_agent", True)),
+                pos.get("trail_sl"),
+                pos.get("scale_in_count", 0),
+                pos.get("scale_out_count", 0),
+                pos.get("max_favourable_atr"),
+                pos.get("max_adverse_atr"),
+                pos.get("last_managed_at"),
+                pos.get("closed_at"),
+                pos.get("close_reason"),
+                pos.get("realised_pnl"),
+                pos.get("r_multiple"),
+            ),
+        )
+        self._conn.commit()
+
+    def agent_positions(self, managed_only: bool = True) -> list[dict[str, Any]]:
+        if managed_only:
+            rows = self._conn.execute(
+                "SELECT * FROM agent_positions WHERE managed_by_agent=1 AND closed_at IS NULL"
+            ).fetchall()
+        else:
+            rows = self._conn.execute("SELECT * FROM agent_positions").fetchall()
+        return [dict(row) for row in rows]
+
+    def agent_position(self, ticket: str) -> dict[str, Any] | None:
+        row = self._conn.execute("SELECT * FROM agent_positions WHERE ticket=?", (ticket,)).fetchone()
+        return dict(row) if row else None
+
+    def close_agent_position(self, ticket: str, close_reason: str, realised_pnl: float, r_multiple: float) -> None:
+        self._conn.execute(
+            """
+            UPDATE agent_positions SET
+                closed_at=?, close_reason=?, realised_pnl=?, r_multiple=?
+            WHERE ticket=?
+            """,
+            (utc_now(), close_reason, realised_pnl, r_multiple, ticket),
+        )
+        self._conn.commit()
+
+    # ---------------------------------------------------------------- agent symbol config
+
+    def agent_symbol_config(self, symbol: str) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            "SELECT * FROM agent_symbol_config WHERE symbol=?", (symbol,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def set_agent_symbol_config(self, symbol: str, config_json: str, enabled: bool = True) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO agent_symbol_config (symbol, config_json, enabled)
+            VALUES (?,?,?)
+            ON CONFLICT(symbol) DO UPDATE SET
+                config_json=excluded.config_json,
+                enabled=excluded.enabled
+            """,
+            (symbol, config_json, int(enabled)),
+        )
+        self._conn.commit()
+
 
 def uuid_suffix() -> str:
     import uuid
