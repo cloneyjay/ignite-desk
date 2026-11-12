@@ -64,7 +64,7 @@ def account(mcp: MCPClient) -> dict[str, Any]:
         "swaps": acc.get("swaps"),
         "commissions": acc.get("commissions"),
         "terminal": {
-            "connected": connection.get("state") == "synchronized",
+            "connected": connection.get("state") in ("connected", "synchronized"),
             "state": connection.get("state"),
             "ping_us": connection.get("ping_microseconds"),
             "build": terminal.get("build"),

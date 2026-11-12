@@ -66,7 +66,8 @@ def health(rt: Runtime = Depends(get_rt)) -> dict[str, Any]:
             "error": mcp_error,
         },
         "terminal": {
-            "connected": (terminal.get("connection") or {}).get("state") == "synchronized",
+            "connected": (terminal.get("connection") or {}).get("state")
+            in ("connected", "synchronized"),
             "state": (terminal.get("connection") or {}).get("state"),
             "build": terminal.get("build"),
             "trade_allowed": bool(terminal.get("mcp_trade_allowed")),

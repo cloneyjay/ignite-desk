@@ -123,6 +123,41 @@ The backend re-validates everything at execute time: state, expiry, kill switch,
 price drift, spread, open position on the symbol, margin, economic blackout,
 `trade_check_market_order`. The LLM has no path to this endpoint.
 
+## Dashboard (P2)
+
+The dashboard is a React 18 + Vite + TypeScript SPA that talks only to the local API.
+It renders API values verbatim: no signal, sizing or stop logic lives in the browser.
+
+```powershell
+# terminal 4 - dashboard on 127.0.0.1:5173 (proxies /api to :8000)
+cd frontend
+npm install
+npm run dev
+```
+
+Open `http://127.0.0.1:5173`. Screens: **Portfolio** (equity, exposure, open risk),
+**Watchlist** (symbols, M5/M15/M30/H1 tabs, candles with blackout shading and the
+Kronos fan, analysis drawer), **History** (closed trades, R multiples) and
+**News & calendar** (calendar, blackout windows, terminal news).
+
+The execution path is deliberately three clicks: **Analyse** → **Execute** (opens the
+review dialog) → **Review & arm** (token) → **Send**. Nothing is sent on a single click,
+and the server re-validates every guard at send time.
+
+```powershell
+cd frontend
+npm run typecheck     # strict TS, no emit
+npm run build         # production bundle into frontend/dist
+npm run verify:ui     # headless Chrome smoke test against the live stack (dev only)
+```
+
+`verify:ui` expects the API on `:8000` and Vite on `:5173`, writes screenshots to
+`frontend/.shots/` (gitignored) and fails on console/page errors.
+
+A stored analysis can be reviewed by id with
+`http://127.0.0.1:5173/watchlist?analysis=<analysis_id>`; the drawer then shows the
+historical forecast and its draft state without touching the live bar.
+
 ## P0 spike: Kronos CPU latency
 
 Decides which Kronos checkpoint is viable for day trading on this machine
@@ -142,7 +177,7 @@ Results go to `spikes/kronos_latency/results.md`.
 - [x] PRD + architecture spec
 - [x] P1 backend core (MCP client, bars, analysis graph, CLI)
 - [x] P1 API: REST + SSE, confirmation-token execution, calendar/blackouts
-- [ ] P2 dashboard MVP
+- [x] P2 dashboard MVP (portfolio, watchlist, analysis drawer, execution dialog, history, news)
 - [ ] P3 news narrative / agent chat
 - [ ] P4 hardening / walk-forward
 - [ ] P5 multi-symbol

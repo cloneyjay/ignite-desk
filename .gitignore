@@ -25,6 +25,7 @@ spikes/**/*.jsonl
 node_modules/
 frontend/dist/
 frontend/.vite/
+frontend/.shots/
 
 # Model cache (downloaded from Hugging Face)
 models/

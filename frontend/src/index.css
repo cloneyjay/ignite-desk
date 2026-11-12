@@ -1,0 +1,68 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-ink-950 text-paper antialiased;
+  background-image:
+    radial-gradient(900px 500px at 12% -8%, rgba(217, 166, 60, 0.07), transparent 60%),
+    radial-gradient(800px 480px at 92% 0%, rgba(91, 168, 245, 0.05), transparent 55%);
+  background-attachment: fixed;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+::selection {
+  background: rgba(217, 166, 60, 0.28);
+}
+
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #22303f;
+  border-radius: 99px;
+  border: 2px solid #0c1118;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #33475d;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.7);
+  cursor: pointer;
+}
+
+@layer components {
+  .field {
+    @apply h-8 rounded-md border border-line bg-ink-900 px-2.5 text-[12px] text-paper outline-none transition-colors placeholder:text-fog/50 focus:border-gold-500/60 focus:ring-1 focus:ring-gold-500/30;
+  }
+
+  .th {
+    @apply px-3 py-2 text-left text-[10.5px] font-semibold uppercase tracking-[0.14em] text-fog;
+  }
+
+  .td {
+    @apply px-3 py-2 text-[12.5px] text-paper/90;
+  }
+
+  .hairline {
+    @apply border-t border-line/60;
+  }
+}
