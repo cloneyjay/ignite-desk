@@ -20,6 +20,8 @@ from backend.ignite.analysis.features import Features
 from backend.ignite.analysis.risk import RiskConfig, SymbolSpec
 from backend.ignite.config import Settings
 from backend.ignite.forecasting.client import ForecastClient
+from backend.ignite.knowledge.loader import sync_cards
+from backend.ignite.llm.client import LLMClient
 from backend.ignite.market import bars as bar_mod
 from backend.ignite.market.symbols import get_spec, quote, spread_points
 from backend.ignite.market.time import Clock
@@ -71,6 +73,7 @@ class Runtime:
         settings: Settings,
         mcp_client: MCPClient | Any | None = None,
         forecast_client: ForecastClient | Any | None = None,
+        llm_client: LLMClient | Any | None = None,
     ) -> None:
         self.settings = settings
         self.store = Store(settings.db_path)
@@ -79,6 +82,13 @@ class Runtime:
             settings.mcp.url, settings.mcp.headers, settings.mcp.timeout_s
         )
         self.forecast = forecast_client or ForecastClient(settings.kronos_worker_url)
+        self.llm = llm_client or LLMClient(settings.llm)
+
+        self.knowledge = None
+        try:
+            self.knowledge = sync_cards(self.store, settings.knowledge_dir)
+        except Exception as exc:  # noqa: BLE001 - health reports the failure
+            self.knowledge = exc
 
         self.jobs: dict[str, Job] = {}
         self.execution_lock = threading.Lock()
@@ -116,7 +126,12 @@ class Runtime:
             try:
                 self.forecast.close()
             finally:
-                self.store.close()
+                try:
+                    close = getattr(self.llm, "close", None)
+                    if close is not None:
+                        close()
+                finally:
+                    self.store.close()
 
     def seed_symbols(self) -> None:
         if self.store.list_symbols():
@@ -368,3 +383,22 @@ class Runtime:
         if self.settings.timezone != "local":
             return self.settings.timezone
         return datetime.now().astimezone().tzname() or "local"
+
+    # ------------------------------------------------------------------ knowledge
+
+    def knowledge_stats(self) -> dict[str, Any]:
+        cards = self.store.knowledge_cards()
+        status = self.knowledge
+        payload: dict[str, Any] = (
+            status.as_dict()
+            if hasattr(status, "as_dict")
+            else {"ok": False, "error": str(status)}
+        )
+        payload["cards"] = len(cards)
+        payload["reviewed"] = sum(1 for card in cards if card["status"] == "reviewed")
+        payload["by_scope"] = {
+            scope: sum(1 for card in cards if card["scope"] == scope)
+            for scope in sorted({card["scope"] for card in cards})
+        }
+        payload["directory"] = str(self.settings.knowledge_dir)
+        return payload

@@ -344,6 +344,183 @@ class Store:
         )
         self._conn.commit()
 
+    # ---------------------------------------------------------------- knowledge
+
+    def sync_knowledge_cards(self, cards: list[dict[str, Any]]) -> None:
+        """Replace the card catalogue with a freshly parsed directory.
+
+        Full replace, not upsert: a card that was deleted from disk must vanish
+        from prompts, and the loader is the only writer.
+        """
+        now = utc_now()
+        with self._conn:
+            self._conn.execute("DELETE FROM knowledge_cards")
+            self._conn.execute("DELETE FROM knowledge_cards_fts")
+            for card in cards:
+                self._conn.execute(
+                    """
+                    INSERT INTO knowledge_cards (
+                        id, title, scope, layer, version, status, reviewed_by,
+                        priority, tags_json, facts_json, applies_to_json,
+                        max_words, body, source_path, checksum, loaded_at
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        card["id"],
+                        card["title"],
+                        card["scope"],
+                        card["layer"],
+                        int(card["version"]),
+                        card["status"],
+                        card.get("reviewed_by"),
+                        int(card["priority"]),
+                        json.dumps(list(card["tags"])),
+                        json.dumps(list(card["facts"])),
+                        json.dumps(list(card["applies_to"])),
+                        int(card["max_words"]),
+                        card["body"],
+                        card["source_path"],
+                        card["checksum"],
+                        now,
+                    ),
+                )
+                self._conn.execute(
+                    "INSERT INTO knowledge_cards_fts (id, title, tags, body)"
+                    " VALUES (?,?,?,?)",
+                    (
+                        card["id"],
+                        card["title"],
+                        " ".join(card["tags"]),
+                        card["body"],
+                    ),
+                )
+
+    @staticmethod
+    def _knowledge_row(row: sqlite3.Row) -> dict[str, Any]:
+        card = dict(row)
+        card["tags"] = json.loads(card.pop("tags_json"))
+        card["facts"] = json.loads(card.pop("facts_json"))
+        card["applies_to"] = json.loads(card.pop("applies_to_json"))
+        return card
+
+    def knowledge_cards(
+        self,
+        *,
+        scope: str | None = None,
+        status: str | None = None,
+        skill: str | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        values: list[Any] = []
+        if scope:
+            clauses.append("scope=?")
+            values.append(scope)
+        if status:
+            clauses.append("status=?")
+            values.append(status)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        rows = self._conn.execute(
+            f"SELECT * FROM knowledge_cards {where}"
+            " ORDER BY priority DESC, id ASC",
+            tuple(values),
+        ).fetchall()
+        cards = [self._knowledge_row(row) for row in rows]
+        if skill:
+            cards = [card for card in cards if skill in card["applies_to"]]
+        return cards
+
+    def knowledge_card(self, card_id: str) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            "SELECT * FROM knowledge_cards WHERE id=?", (card_id,)
+        ).fetchone()
+        return self._knowledge_row(row) if row else None
+
+    def search_knowledge(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
+        import re
+
+        tokens = re.findall(r"[A-Za-z0-9_]+", query)
+        if not tokens:
+            return []
+        match = " ".join(f'"{token}"' for token in tokens)
+        try:
+            rows = self._conn.execute(
+                """
+                SELECT c.* FROM knowledge_cards_fts f
+                JOIN knowledge_cards c ON c.id = f.id
+                WHERE knowledge_cards_fts MATCH ?
+                ORDER BY rank LIMIT ?
+                """,
+                (match, limit),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []
+        return [self._knowledge_row(row) for row in rows]
+
+    # ---------------------------------------------------------------- agent runs
+
+    def insert_agent_run(self, run: dict[str, Any]) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO agent_runs (
+                id, created_at, skill, subject, provider, model, status, fallback,
+                latency_ms, prompt_tokens, completion_tokens, cards_json,
+                checks_json, input_json, output_json, narrative, error
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                run["id"],
+                run["created_at"],
+                run["skill"],
+                run.get("subject"),
+                run["provider"],
+                run.get("model"),
+                run["status"],
+                int(bool(run.get("fallback"))),
+                run.get("latency_ms"),
+                run.get("prompt_tokens"),
+                run.get("completion_tokens"),
+                json.dumps(run.get("cards", []), default=str),
+                json.dumps(run.get("checks", {}), default=str),
+                json.dumps(run.get("input", {}), default=str),
+                json.dumps(run.get("output", {}), default=str),
+                run.get("narrative"),
+                run.get("error"),
+            ),
+        )
+        self._conn.commit()
+
+    @staticmethod
+    def _agent_run_row(row: sqlite3.Row) -> dict[str, Any]:
+        run = dict(row)
+        for key in ("cards_json", "checks_json", "input_json", "output_json"):
+            raw = run.pop(key, None)
+            run[key.replace("_json", "")] = json.loads(raw) if raw else None
+        run["fallback"] = bool(run["fallback"])
+        return run
+
+    def agent_run(self, run_id: str) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            "SELECT * FROM agent_runs WHERE id=?", (run_id,)
+        ).fetchone()
+        return self._agent_run_row(row) if row else None
+
+    def latest_agent_run(
+        self, skill: str, subject: str | None, statuses: tuple[str, ...] = ("ok", "fallback")
+    ) -> dict[str, Any] | None:
+        placeholders = ",".join("?" for _ in statuses)
+        rows = self._conn.execute(
+            f"SELECT * FROM agent_runs WHERE skill=? AND subject=? AND status IN ({placeholders})"
+            " ORDER BY created_at DESC LIMIT 1",
+            (skill, subject, *statuses),
+        ).fetchall()
+        return self._agent_run_row(rows[0]) if rows else None
+
+    def recent_agent_runs(self, limit: int = 50) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM agent_runs ORDER BY created_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [self._agent_run_row(row) for row in rows]
+
 
 def uuid_suffix() -> str:
     import uuid

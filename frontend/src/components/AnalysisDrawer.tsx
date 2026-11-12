@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 
-import { useDraft } from "../hooks/useApi";
-import type { Analysis, Draft, Job } from "../lib/types";
+import { useDraft, useNarrative, useGenerateNarrative } from "../hooks/useApi";
+import type { Analysis, Draft, Job, Narrative } from "../lib/types";
 import { dateTime, money, number, percent, price } from "../lib/format";
 import { Badge, Button, EmptyState, ProgressBar, Row, Spinner } from "./ui";
-import { AlertIcon, BoltIcon, CheckIcon, RefreshIcon, XIcon } from "./icons";
+import { AlertIcon, BoltIcon, CheckIcon, RefreshIcon, XIcon, BrainIcon } from "./icons";
 
 function signalTone(side: string): "long" | "short" | "neutral" {
   if (side === "long") return "long";
@@ -33,6 +33,8 @@ export default function AnalysisDrawer({
 }) {
   const draft: Draft | null = analysis?.draft ?? null;
   const live = useDraft(draft?.id ?? null, Boolean(draft));
+  const narrative = useNarrative(analysis?.id ?? null);
+  const generateNarrative = useGenerateNarrative();
   const active = live.data?.draft ?? draft;
   const [now, setNow] = useState(() => Date.now());
 
@@ -46,6 +48,11 @@ export default function AnalysisDrawer({
     : 0;
   const running = job?.status === "running" || job?.status === "queued";
   const executable = Boolean(active?.executable && remaining > 0 && !active?.blocked);
+
+  const handleGenerateNarrative = (refresh = false) => {
+    if (!analysis?.id) return;
+    generateNarrative.mutate({ analysisId: analysis.id, refresh });
+  };
 
   return (
     <aside className="fixed right-0 top-[58px] z-50 flex h-[calc(100vh-58px)] w-[540px] max-w-full animate-slide-in flex-col border-l border-line bg-ink-900/95 shadow-drawer backdrop-blur">
@@ -149,6 +156,14 @@ export default function AnalysisDrawer({
               />
             )}
 
+            <NarrativePanel
+              analysis={analysis}
+              narrative={narrative.data ?? null}
+              loading={narrative.isLoading}
+              generating={generateNarrative.isPending}
+              onGenerate={handleGenerateNarrative}
+            />
+
             <footer className="space-y-1 border-t border-line/60 pt-3">
               <Row label="Model" value={analysis.model_id} />
               <Row label="Inference" value={`${number(analysis.infer_s, 2)} s`} />
@@ -164,6 +179,142 @@ export default function AnalysisDrawer({
       </div>
     </aside>
   );
+}
+
+function NarrativePanel({
+  analysis,
+  narrative,
+  loading,
+  generating,
+  onGenerate,
+}: {
+  analysis: Analysis;
+  narrative: Narrative | null;
+  loading: boolean;
+  generating: boolean;
+  onGenerate: (refresh?: boolean) => void;
+}) {
+  if (!analysis) return null;
+
+  const notGenerated = narrative?.status === "not_generated" || narrative?.narrative === null;
+
+  if (notGenerated && !loading && !generating) {
+    return (
+      <section>
+        <SectionTitle>AI commentary — non-binding</SectionTitle>
+        <div className="rounded-xl border border-line/50 bg-ink-850/40 p-4">
+          <p className="text-[12px] text-fog mb-3">
+            The deterministic engine has produced the forecast, signal and draft above.
+            This section adds a short desk note written by the LLM — it cannot change any
+            number, override a block, or execute a trade.
+          </p>
+          <Button
+            variant="secondary"
+            onClick={() => onGenerate(false)}
+            loading={generating}
+            className="w-full"
+          >
+            <BrainIcon className="h-3.5 w-3.5 mr-2" />
+            Generate commentary
+          </Button>
+        </div>
+      </section>
+    );
+  }
+
+  if (loading || generating) {
+    return (
+      <section>
+        <SectionTitle>AI commentary — non-binding</SectionTitle>
+        <div className="rounded-xl border border-gold-500/25 bg-gold-500/[0.06] p-4">
+          <div className="flex items-center gap-2">
+            <Spinner className="h-4 w-4" />
+            <span className="text-[12px] text-gold-300">
+              {loading ? "Loading commentary…" : "Generating commentary…"}
+            </span>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  if (narrative && narrative.narrative) {
+    const isFallback = narrative.provider === "template" || narrative.fallback;
+    const cards = narrative.cards ?? [];
+    const checks = narrative.checks ?? {};
+
+    return (
+      <section>
+        <SectionTitle>AI commentary — non-binding</SectionTitle>
+        <div className="rounded-xl border border-line/50 bg-ink-850/40 p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <BrainIcon className="h-4 w-4 text-gold-400" />
+              <span className="text-[11px] font-medium text-paper">Commentary</span>
+              {isFallback && (
+                <Badge tone="warn" className="text-[9px]">
+                  Template (model unavailable)
+                </Badge>
+              )}
+              {!isFallback && (
+                <Badge tone="gold" className="text-[9px]">
+                  {narrative.provider}
+                </Badge>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onGenerate(true)}
+                loading={generating}
+              >
+                <RefreshIcon className="h-3.5 w-3.5" />
+                Regenerate
+              </Button>
+            </div>
+          </div>
+
+          <p className="text-[12px] text-paper/90 leading-relaxed mb-3 whitespace-pre-wrap">
+            {narrative.narrative}
+          </p>
+
+          {isFallback && (
+            <p className="text-[10.5px] text-fog/70 mb-3">
+              The model was unavailable or its output failed numeric validation. A
+              deterministic template was used instead.
+            </p>
+          )}
+
+          <div className="space-y-1 text-[10.5px] text-fog/60">
+            <Row
+              label="Provider"
+              value={
+                narrative.provider === "template"
+                  ? "deterministic template"
+                  : `${narrative.provider} · ${narrative.model ?? "?"}`
+              }
+            />
+            <Row label="Generated" value={dateTime(narrative.created_at)} />
+            {narrative.latency_ms && (
+              <Row label="Latency" value={`${narrative.latency_ms} ms`} />
+            )}
+            {cards.length > 0 && (
+              <Row
+                label="Desk notes"
+                value={cards.map((c) => c.id).join(", ")}
+              />
+            )}
+            {checks.numbers_checked && (
+              <Row label="Numbers checked" value={checks.numbers_checked.toString()} />
+            )}
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  return null;
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {

@@ -8,14 +8,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+from pathlib import Path
 
 import numpy as np
 
 from backend.ignite.analysis.graph import run_analysis
 from backend.ignite.analysis.risk import RiskConfig
-from backend.ignite.config import load_settings
+from backend.ignite.config import ROOT, load_settings
 from backend.ignite.forecasting.client import ForecastClient, ForecastError
+from backend.ignite.knowledge import desk_facts, lint_cards, load_cards, render_card, sync_cards
+from backend.ignite.llm import LLMClient
 from backend.ignite.market.time import Clock
 from backend.ignite.mcp.client import MCPClient, MCPError
 from backend.ignite.store.db import Store
@@ -28,6 +32,26 @@ def _account_equity(mcp: MCPClient) -> float:
     if not equity:
         raise RuntimeError("account equity unavailable")
     return float(equity)
+
+
+def _knowledge_dir(args: argparse.Namespace | None = None) -> Path:
+    raw = (
+        getattr(args, "dir", None)
+        or os.getenv("IGNITE_KNOWLEDGE_DIR", "./docs/agent-knowledge")
+    )
+    path = Path(raw)
+    return path if path.is_absolute() else (ROOT / path).resolve()
+
+
+def _dev_facts() -> dict[str, str]:
+    from types import SimpleNamespace
+
+    return desk_facts(
+        SimpleNamespace(
+            draft_ttl_s=90, news_pre_minutes=30, news_post_minutes=15
+        ),
+        RiskConfig(),
+    )
 
 
 def cmd_health(args: argparse.Namespace) -> int:
@@ -54,7 +78,74 @@ def cmd_health(args: argparse.Namespace) -> int:
         print("             start it with: python -m backend.ignite.forecasting.worker")
     finally:
         client.close()
+
+    directory = _knowledge_dir(args)
+    cards = load_cards(directory)
+    print(f"knowledge    {len(cards.cards)} cards  {len(cards.issues)} issues  {directory}")
+    for issue in cards.issues:
+        print(f"             {issue.code}: {issue.message}  ({issue.source})")
+
+    llm = LLMClient(settings.llm)
+    try:
+        available = llm.available()
+        chain = " -> ".join(llm.settings.provider_order) or "(empty)"
+        flags = "  ".join(f"{name}={str(ok).lower()}" for name, ok in available.items())
+        print(f"llm          chain {chain}   {flags}")
+    finally:
+        llm.close()
     return 0
+
+
+def cmd_knowledge(args: argparse.Namespace) -> int:
+    directory = _knowledge_dir(args)
+    command = args.knowledge_command
+    result = load_cards(directory)
+
+    if command == "lint":
+        for card in result.cards:
+            print(
+                f"ok      {card.id:<32} {card.scope:<18} v{card.version} "
+                f"{card.status:<8} {card.words:>3}w"
+            )
+        for issue in result.issues:
+            print(f"ERROR   {issue.source}: {issue.code}: {issue.message}", file=sys.stderr)
+        print(f"{len(result.cards)} cards, {len(result.issues)} issues")
+        return 0 if not result.issues else 1
+
+    if command == "list":
+        for card in result.cards:
+            print(
+                f"{card.id:<34} {card.scope:<18} {card.status:<8} "
+                f"p{card.priority:<3} v{card.version} {card.title}"
+            )
+        return 0
+
+    if command == "show":
+        card = next((item for item in result.cards if item.id == args.card_id), None)
+        if card is None:
+            print(f"no card {args.card_id!r}", file=sys.stderr)
+            return 2
+        print(f"{card.title}  [{card.id} v{card.version} {card.status}]")
+        print(f"scope {card.scope}  layer {card.layer}  priority {card.priority}")
+        print(f"skills {', '.join(card.applies_to)}")
+        print(f"source {card.source_path}")
+        print()
+        print(render_card(card, _dev_facts()))
+        return 0
+
+    if command == "reload":
+        settings = load_settings()
+        store = Store(settings.db_path)
+        try:
+            synced = sync_cards(store, directory)
+        finally:
+            store.close()
+        payload = synced.as_dict()
+        print(json.dumps(payload, indent=2))
+        return 0 if synced.ok and synced.written else 1
+
+    print(f"unknown knowledge command {command!r}", file=sys.stderr)
+    return 2
 
 
 def cmd_analyse(args: argparse.Namespace) -> int:
@@ -175,6 +266,18 @@ def main() -> int:
     p.add_argument("--json", action="store_true")
     p.add_argument("--save", action="store_true")
     p.set_defaults(func=cmd_analyse)
+
+    p_knowledge = sub.add_parser("knowledge", help="lint, inspect and load knowledge cards")
+    p_knowledge.add_argument("--dir", default=None)
+    knowledge_sub = p_knowledge.add_subparsers(
+        dest="knowledge_command", required=True
+    )
+    knowledge_sub.add_parser("lint", help="parse and validate every card")
+    knowledge_sub.add_parser("list", help="list cards")
+    show = knowledge_sub.add_parser("show", help="render one card")
+    show.add_argument("card_id")
+    knowledge_sub.add_parser("reload", help="load the card directory into SQLite")
+    p_knowledge.set_defaults(func=cmd_knowledge)
 
     args = parser.parse_args()
     return args.func(args)

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from datetime import datetime
 from typing import Any
 
@@ -76,10 +75,8 @@ def health(rt: Runtime = Depends(get_rt)) -> dict[str, Any]:
         "kronos": kronos,
         "queue_depth": len(running),
         "kill_switch": rt.kill_switch(),
-        "llm": {
-            "nim": bool(os.getenv("NVIDIA_API_KEY")),
-            "local": bool(os.getenv("OLLAMA_BASE_URL")),
-        },
+        "llm": rt.llm.available(),
+        "knowledge": rt.knowledge_stats(),
     }
 
 

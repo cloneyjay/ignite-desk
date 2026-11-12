@@ -12,6 +12,7 @@ import type {
   ExecutionResult,
   Health,
   Job,
+  Narrative,
   NewsDetail,
   NewsItem,
   OrderRow,
@@ -119,6 +120,13 @@ export const api = {
       `/analyses/${analysisId}/draft`,
       { method: "POST" },
     ),
+  narrative: (analysisId: string) =>
+    request<Narrative>(`/analyses/${analysisId}/narrative`),
+  generateNarrative: (analysisId: string, refresh = false) =>
+    request<Narrative>(`/analyses/${analysisId}/narrative`, {
+      method: "POST",
+      body: JSON.stringify({ refresh }),
+    }),
 
   draft: (draftId: string) => request<DraftDetail>(`/drafts/${draftId}`),
   confirmDraft: (draftId: string) =>

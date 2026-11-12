@@ -55,14 +55,19 @@ async function main() {
     if (message.type() !== "error") return;
     const text = message.text();
     if (text.includes("favicon") || text.includes("Download the React DevTools")) return;
-    errors.push(`console: ${text}`);
+    const location = message.location();
+    const urlInfo = location?.url ? ` (${location.url}:${location.lineNumber})` : "";
+    errors.push(`console${urlInfo}: ${text}`);
   });
   page.on("pageerror", (error) => errors.push(`pageerror: ${error.message}`));
   page.on("requestfailed", (request) => {
     const url = request.url();
+    const failure = request.failure();
     // The SSE stream is expected to churn on reconnect.
     if (url.includes("/api/events")) return;
-    errors.push(`requestfailed: ${url} ${request.failure()?.errorText ?? ""}`.trim());
+    // Expected 404s: narrative not yet generated for a new analysis
+    if (url.includes("/narrative") && failure?.errorText?.includes("404")) return;
+    errors.push(`requestfailed: ${url} ${failure?.errorText ?? ""}`.trim());
   });
 
   const shot = async (name) => {

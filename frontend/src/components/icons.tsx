@@ -125,3 +125,14 @@ export function ChevronRightIcon({ className = base }: IconProps) {
     </svg>
   );
 }
+
+export function BrainIcon({ className = base }: IconProps) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <path d="M12 5a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M12 5v6M15 8a5 5 0 1 1-6 0 5 5 0 0 1 6 0Z" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M12 17v5" strokeLinecap="round" />
+      <path d="M9 20h6" strokeLinecap="round" />
+    </svg>
+  );
+}

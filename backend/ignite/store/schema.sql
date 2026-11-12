@@ -109,3 +109,56 @@ CREATE TABLE IF NOT EXISTS audit_log (
     payload     TEXT,
     result      TEXT
 );
+
+-- ---------------------------------------------------------------------------
+-- Agent knowledge: reviewed markdown cards + a full-text index, and one row
+-- per LLM run so every sentence shown in the UI can be reconstructed.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS knowledge_cards (
+    id              TEXT PRIMARY KEY,
+    title           TEXT NOT NULL,
+    scope           TEXT NOT NULL,
+    layer           TEXT NOT NULL,
+    version         INTEGER NOT NULL,
+    status          TEXT NOT NULL,
+    reviewed_by     TEXT,
+    priority        INTEGER NOT NULL DEFAULT 50,
+    tags_json       TEXT NOT NULL,
+    facts_json      TEXT NOT NULL,
+    applies_to_json TEXT NOT NULL,
+    max_words       INTEGER NOT NULL DEFAULT 180,
+    body            TEXT NOT NULL,
+    source_path     TEXT NOT NULL,
+    checksum        TEXT NOT NULL,
+    loaded_at       TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_scope
+    ON knowledge_cards (scope, status, priority);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_cards_fts
+    USING fts5(id UNINDEXED, title, tags, body);
+
+CREATE TABLE IF NOT EXISTS agent_runs (
+    id              TEXT PRIMARY KEY,
+    created_at      TEXT NOT NULL,
+    skill           TEXT NOT NULL,
+    subject         TEXT,
+    provider        TEXT NOT NULL,
+    model           TEXT,
+    status          TEXT NOT NULL,
+    fallback        INTEGER NOT NULL DEFAULT 0,
+    latency_ms      INTEGER,
+    prompt_tokens   INTEGER,
+    completion_tokens INTEGER,
+    cards_json      TEXT NOT NULL,
+    checks_json     TEXT NOT NULL,
+    input_json      TEXT NOT NULL,
+    output_json     TEXT,
+    narrative       TEXT,
+    error           TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_runs_subject
+    ON agent_runs (skill, subject, created_at);

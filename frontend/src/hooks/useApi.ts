@@ -18,6 +18,7 @@ export const keys = {
     ["bars", symbol, tf, count] as const,
   analysis: (id: string) => ["analysis", id] as const,
   latest: (symbol: string, tf: string) => ["latest", symbol, tf] as const,
+  narrative: (id: string) => ["narrative", id] as const,
   job: (id: string) => ["job", id] as const,
   draft: (id: string) => ["draft", id] as const,
   calendar: (impact: string, currency: string) =>
@@ -92,6 +93,16 @@ export function useAnalysis(analysisId: string | null) {
     queryFn: () => api.analysis(analysisId as string),
     enabled: Boolean(analysisId),
     staleTime: 60_000,
+  });
+}
+
+export function useNarrative(analysisId: string | null) {
+  return useQuery({
+    queryKey: keys.narrative(analysisId ?? "-"),
+    queryFn: () => api.narrative(analysisId as string),
+    enabled: Boolean(analysisId),
+    retry: false,
+    staleTime: Infinity,
   });
 }
 
@@ -171,6 +182,18 @@ export function useRemoveSymbol() {
   return useMutation({
     mutationFn: (symbol: string) => api.removeSymbol(symbol),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.symbols }),
+  });
+}
+
+export function useGenerateNarrative() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ analysisId, refresh }: { analysisId: string; refresh?: boolean }) =>
+      api.generateNarrative(analysisId, refresh),
+    onSuccess: (result) => {
+      queryClient.setQueryData(keys.narrative(result.analysis_id ?? result.subject ?? ""), result);
+      queryClient.invalidateQueries({ queryKey: ["agent", "runs"] });
+    },
   });
 }
 

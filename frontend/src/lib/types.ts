@@ -35,7 +35,15 @@ export interface Health {
   };
   queue_depth: number;
   kill_switch: boolean;
-  llm: { nim: boolean; local: boolean };
+  llm: { nim: boolean; local: boolean; extra?: boolean };
+  knowledge: {
+    ok: boolean;
+    cards: number;
+    reviewed: number;
+    directory?: string;
+    issues?: { source: string; code: string; message: string }[];
+    error?: string;
+  };
 }
 
 export interface AccountInfo {
@@ -249,6 +257,38 @@ export interface Analysis {
 export interface DraftDetail {
   draft: Draft;
   analysis: Analysis | null;
+}
+
+export interface NarrativeCard {
+  id: string;
+  title: string;
+  version: number;
+  scope: string;
+}
+
+export interface Narrative {
+  run_id: string | null;
+  skill: string;
+  subject: string | null;
+  analysis_id: string | null;
+  narrative: string | null;
+  provider: "nim" | "local" | "extra" | "template" | string | null;
+  model: string | null;
+  status: "ok" | "fallback" | "error" | "not_generated" | string;
+  fallback: boolean;
+  created_at: string | null;
+  latency_ms: number | null;
+  cards: NarrativeCard[];
+  checks: {
+    ok?: boolean;
+    numbers_checked?: number;
+    violations?: { token: string; context: string }[];
+    style_issues?: string[];
+    template?: boolean;
+    provider_errors?: string[];
+    rejected_text?: string | null;
+  };
+  error: string | null;
 }
 
 export interface ConfirmResult {

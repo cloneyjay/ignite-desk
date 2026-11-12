@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.ignite.api.errors import install_handlers
 from backend.ignite.api.routes import (
     account,
+    agent,
     analyses,
     drafts,
     events,
@@ -82,6 +83,7 @@ def create_app(
         trades,
         news,
         events,
+        agent,
     ):
         app.include_router(module.router)
 
