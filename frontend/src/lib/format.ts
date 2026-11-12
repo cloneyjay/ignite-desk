@@ -101,6 +101,17 @@ export function dayLabel(value: string | null | undefined): string {
   }).format(date);
 }
 
+export function formatTime(value: string | null | undefined): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+}
+
 export function duration(seconds: number | null | undefined): string {
   if (seconds === null || seconds === undefined) return "—";
   if (seconds < 60) return `${Math.round(seconds)}s`;

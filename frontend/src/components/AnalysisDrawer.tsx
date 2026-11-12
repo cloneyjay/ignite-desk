@@ -4,7 +4,7 @@ import { useDraft, useNarrative, useGenerateNarrative } from "../hooks/useApi";
 import type { Analysis, Draft, Job, Narrative } from "../lib/types";
 import { dateTime, money, number, percent, price } from "../lib/format";
 import { Badge, Button, EmptyState, ProgressBar, Row, Spinner } from "./ui";
-import { AlertIcon, BoltIcon, CheckIcon, RefreshIcon, XIcon, BrainIcon } from "./icons";
+import { AlertIcon, BoltIcon, CheckIcon, RefreshIcon, XIcon, BrainIcon, ChevronLeftIcon, ChevronRightIcon } from "./icons";
 
 function signalTone(side: string): "long" | "short" | "neutral" {
   if (side === "long") return "long";
@@ -37,11 +37,18 @@ export default function AnalysisDrawer({
   const generateNarrative = useGenerateNarrative();
   const active = live.data?.draft ?? draft;
   const [now, setNow] = useState(() => Date.now());
+  const [isRetracted, setIsRetracted] = useState(() =>
+    typeof window !== "undefined" && localStorage.getItem("drawerRetracted") === "true"
+  );
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem("drawerRetracted", isRetracted.toString());
+  }, [isRetracted]);
 
   const remaining = active
     ? Math.max(0, Math.floor((new Date(active.expires_at).getTime() - now) / 1000))
@@ -54,129 +61,191 @@ export default function AnalysisDrawer({
     generateNarrative.mutate({ analysisId: analysis.id, refresh });
   };
 
+  const drawerWidth = isRetracted ? 60 : 540;
+
   return (
-    <aside className="fixed right-0 top-[58px] z-50 flex h-[calc(100vh-58px)] w-[540px] max-w-full animate-slide-in flex-col border-l border-line bg-ink-900/95 shadow-drawer backdrop-blur">
-      <header className="flex items-start justify-between gap-3 border-b border-line/70 px-5 py-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <BoltIcon className="h-4 w-4 text-gold-400" />
-            <h2 className="text-[14px] font-semibold text-paper">
-              {analysis ? `${analysis.symbol} · ${analysis.timeframe}` : "Analysis"}
-            </h2>
-            {analysis ? <Badge tone="gold">{analysis.signal.version}</Badge> : null}
-          </div>
-          <p className="mt-1 text-[11.5px] text-fog">
-            {analysis
-              ? `last closed bar ${dateTime(analysis.last_bar_time)} · ${analysis.samples} paths · horizon ${analysis.horizon}`
-              : "Deterministic forecast, no LLM in the numbers."}
-          </p>
-        </div>
-        <button
-          onClick={onClose}
-          className="rounded-md p-1.5 text-fog transition-colors hover:bg-ink-800 hover:text-paper"
-          aria-label="Close analysis"
-        >
-          <XIcon className="h-4 w-4" />
-        </button>
-      </header>
-
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-        {running ? (
-          <RunningPanel job={job as Job} />
-        ) : !analysis ? (
-          <EmptyState
-            title="No analysis for this bar"
-            message="Pick a timeframe and press Analyse. The result is cached per closed bar."
-          />
+    <aside
+      className={`fixed right-0 top-[58px] z-50 flex h-[calc(100vh-58px)] transition-all duration-200 ease-out ${
+        isRetracted ? "w-[60px]" : "w-[540px]"
+      } max-w-full animate-slide-in flex-col border-l border-line bg-ink-900/95 shadow-drawer backdrop-blur`}
+      style={{ width: drawerWidth }}
+    >
+      {/* Retract handle - always visible on the left edge */}
+      <button
+        onClick={() => setIsRetracted(!isRetracted)}
+        className="absolute -left-8 top-1/2 -translate-y-1/2 z-10 flex items-center justify-center w-8 h-8 rounded-r-md border border-line bg-ink-900/95 shadow-lg backdrop-blur transition-transform duration-200 hover:bg-ink-800"
+        aria-label={isRetracted ? "Expand analysis drawer" : "Retract analysis drawer"}
+      >
+        {isRetracted ? (
+          <ChevronRightIcon className="h-4 w-4 text-gold-400" />
         ) : (
-          <div className="space-y-5">
-            <SignalHeader analysis={analysis} />
-
-            <section>
-              <SectionTitle>Forecast</SectionTitle>
-              <div className="grid grid-cols-3 gap-2">
-                <Mini label="p up" value={percent(analysis.signal.p_up)} tone={signalTone(analysis.signal.side)} />
-                <Mini
-                  label="expected"
-                  value={`${analysis.signal.edge >= 0 ? "+" : "−"}${number(Math.abs(analysis.signal.edge), 2)}`}
-                  hint="USD per ounce"
-                />
-                <Mini
-                  label="edge"
-                  value={`${number(analysis.signal.edge_atr, 2)} ATR`}
-                  tone={signalTone(analysis.signal.side)}
-                />
-                <Mini label="dispersion" value={number(analysis.signal.dispersion, 2)} />
-                <Mini label="ATR" value={number(analysis.features.atr, 2)} />
-                <Mini label="spread" value={`${number(analysis.features.spread_points, 0)} pts`} />
-              </div>
-            </section>
-
-            <section>
-              <SectionTitle>Why</SectionTitle>
-              <div className="space-y-1.5">
-                {analysis.signal.reasons.map((reason) => (
-                  <div
-                    key={reason}
-                    className="flex items-start gap-2 rounded-md border border-line/50 bg-ink-850/50 px-3 py-2 text-[12px] text-paper/80"
-                  >
-                    {analysis.signal.side === "none" ? (
-                      <AlertIcon className="mt-0.5 h-3 w-3 shrink-0 text-warn" />
-                    ) : (
-                      <CheckIcon className="mt-0.5 h-3 w-3 shrink-0 text-long" />
-                    )}
-                    {reason}
-                  </div>
-                ))}
-                {analysis.signal.reasons.length === 0 ? (
-                  <div className="text-[12px] text-fog">No rule notes were recorded.</div>
-                ) : null}
-              </div>
-            </section>
-
-            {active ? (
-              <DraftPanel
-                draft={active}
-                analysis={analysis}
-                remaining={remaining}
-                executable={executable}
-                onExecute={() => onExecute(active.id)}
-                onRefresh={onRefreshDraft}
-                refreshing={refreshing}
-              />
-            ) : (
-              <EmptyState
-                title="No draft order"
-                message="The rule returned NO TRADE for this bar. Nothing to size, nothing to send."
-                action={
-                  <Button variant="secondary" onClick={onReanalyse} loading={analysing}>
-                    <RefreshIcon className="h-3.5 w-3.5" /> Re-analyse
-                  </Button>
-                }
-              />
-            )}
-
-            <NarrativePanel
-              analysis={analysis}
-              narrative={narrative.data ?? null}
-              loading={narrative.isLoading}
-              generating={generateNarrative.isPending}
-              onGenerate={handleGenerateNarrative}
-            />
-
-            <footer className="space-y-1 border-t border-line/60 pt-3">
-              <Row label="Model" value={analysis.model_id} />
-              <Row label="Inference" value={`${number(analysis.infer_s, 2)} s`} />
-              <Row label="Signal / risk" value={`${analysis.signal.version} · ${analysis.risk_version}`} />
-              <Row label="Analysed" value={dateTime(analysis.created_at)} />
-              <div className="pt-2 text-[10.5px] leading-relaxed text-fog/70">
-                Numbers come from the deterministic graph. Commentary, once enabled, is
-                labelled separately and can never change an order.
-              </div>
-            </footer>
-          </div>
+          <ChevronLeftIcon className="h-4 w-4 text-fog" />
         )}
+      </button>
+
+      <div
+        className={`flex-1 overflow-y-auto transition-opacity duration-200 ${
+          isRetracted ? "opacity-0 pointer-events-none" : "opacity-100"
+        }`}
+      >
+        <header className="flex items-start justify-between gap-3 border-b border-line/70 px-5 py-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <BoltIcon className="h-4 w-4 text-gold-400" />
+              <h2 className="text-[14px] font-semibold text-paper">
+                {analysis ? `${analysis.symbol} · ${analysis.timeframe}` : "Analysis"}
+              </h2>
+              {analysis ? <Badge tone="gold">{analysis.signal.version}</Badge> : null}
+            </div>
+            <p className="mt-1 text-[11.5px] text-fog">
+              {analysis
+                ? `last closed bar ${dateTime(analysis.last_bar_time)} · ${analysis.samples} paths · horizon ${analysis.horizon}`
+                : "Deterministic forecast, no LLM in the numbers."}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-md p-1.5 text-fog transition-colors hover:bg-ink-800 hover:text-paper"
+            aria-label="Close analysis"
+          >
+            <XIcon className="h-4 w-4" />
+          </button>
+        </header>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          {running ? (
+            <RunningPanel job={job as Job} />
+          ) : !analysis ? (
+            <EmptyState
+              title="No analysis for this bar"
+              message="Pick a timeframe and press Analyse. The result is cached per closed bar."
+            />
+          ) : (
+            <div className="space-y-5">
+              <SignalHeader analysis={analysis} />
+
+              <section>
+                <SectionTitle>Forecast</SectionTitle>
+                <div className="grid grid-cols-3 gap-2">
+                  <Mini label="p up" value={percent(analysis.signal.p_up)} tone={signalTone(analysis.signal.side)} />
+                  <Mini
+                    label="expected"
+                    value={`${analysis.signal.edge >= 0 ? "+" : "−"}${number(Math.abs(analysis.signal.edge), 2)}`}
+                    hint="USD per ounce"
+                  />
+                  <Mini
+                    label="edge"
+                    value={`${number(analysis.signal.edge_atr, 2)} ATR`}
+                    tone={signalTone(analysis.signal.side)}
+                  />
+                  <Mini label="dispersion" value={number(analysis.signal.dispersion, 2)} />
+                  <Mini label="ATR" value={number(analysis.features.atr, 2)} />
+                  <Mini label="spread" value={`${number(analysis.features.spread_points, 0)} pts`} />
+                </div>
+              </section>
+
+              <section>
+                <SectionTitle>Why</SectionTitle>
+                <div className="space-y-1.5">
+                  {analysis.signal.reasons.map((reason) => (
+                    <div
+                      key={reason}
+                      className="flex items-start gap-2 rounded-md border border-line/50 bg-ink-850/50 px-3 py-2 text-[12px] text-paper/80"
+                    >
+                      {analysis.signal.side === "none" ? (
+                        <AlertIcon className="mt-0.5 h-3 w-3 shrink-0 text-warn" />
+                      ) : (
+                        <CheckIcon className="mt-0.5 h-3 w-3 shrink-0 text-long" />
+                      )}
+                      {reason}
+                    </div>
+                  ))}
+                  {analysis.signal.reasons.length === 0 ? (
+                    <div className="text-[12px] text-fog">No rule notes were recorded.</div>
+                  ) : null}
+                </div>
+              </section>
+
+              {active ? (
+                <DraftPanel
+                  draft={active}
+                  analysis={analysis}
+                  remaining={remaining}
+                  executable={executable}
+                  onExecute={() => onExecute(active.id)}
+                  onRefresh={onRefreshDraft}
+                  refreshing={refreshing}
+                />
+              ) : (
+                <EmptyState
+                  title="No draft order"
+                  message="The rule returned NO TRADE for this bar. Nothing to size, nothing to send."
+                  action={
+                    <Button variant="secondary" onClick={onReanalyse} loading={analysing}>
+                      <RefreshIcon className="h-3.5 w-3.5" /> Re-analyse
+                    </Button>
+                  }
+                />
+              )}
+
+              <NarrativePanel
+                analysis={analysis}
+                narrative={narrative.data ?? null}
+                loading={narrative.isLoading}
+                generating={generateNarrative.isPending}
+                onGenerate={handleGenerateNarrative}
+              />
+
+              <footer className="space-y-1 border-t border-line/60 pt-3">
+                <Row label="Model" value={analysis.model_id} />
+                <Row label="Inference" value={`${number(analysis.infer_s, 2)} s`} />
+                <Row label="Signal / risk" value={`${analysis.signal.version} · ${analysis.risk_version}`} />
+                <Row label="Analysed" value={dateTime(analysis.created_at)} />
+                <div className="pt-2 text-[10.5px] leading-relaxed text-fog/70">
+                  Numbers come from the deterministic graph. Commentary, once enabled, is
+                  labelled separately and can never change an order.
+                </div>
+              </footer>
+            </div>
+          )}
+        </div>
       </div>
+
+      {/* Retracted view - icon strip */}
+      {isRetracted && (
+        <div className="flex flex-col items-center justify-center h-full gap-4 pt-4 pb-4">
+          <div className="relative group">
+            <BoltIcon className="h-5 w-5 text-gold-400" />
+            <span className="absolute left-full top-1/2 -translate-y-1/2 ml-2 whitespace-nowrap rounded px-2 py-1 text-[10px] bg-ink-900 border border-line opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all">
+              Analysis
+            </span>
+          </div>
+          <div className="relative group">
+            <BrainIcon className="h-5 w-5 text-gold-400" />
+            <span className="absolute left-full top-1/2 -translate-y-1/2 ml-2 whitespace-nowrap rounded px-2 py-1 text-[10px] bg-ink-900 border border-line opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all">
+              AI Commentary
+            </span>
+          </div>
+          <div className="relative group">
+            <div className="relative group">
+              <svg className="h-5 w-5 text-long" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 5v14M19 12H5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </div>
+            <span className="absolute left-full top-1/2 -translate-y-1/2 ml-2 whitespace-nowrap rounded px-2 py-1 text-[10px] bg-ink-900 border border-line opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all">
+              Execute
+            </span>
+          </div>
+          <div className="relative group">
+            <svg className="h-5 w-5 text-short" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M6 6l12 12M18 6l-12 12" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span className="absolute left-full top-1/2 -translate-y-1/2 ml-2 whitespace-nowrap rounded px-2 py-1 text-[10px] bg-ink-900 border border-line opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all">
+              Close
+            </span>
+          </div>
+        </div>
+      )}
     </aside>
   );
 }
@@ -331,16 +400,16 @@ function SignalHeader({ analysis }: { analysis: Analysis }) {
     analysis.signal.side === "long"
       ? "LONG"
       : analysis.signal.side === "short"
-        ? "SHORT"
-        : "NO TRADE";
+      ? "SHORT"
+      : "NO TRADE";
   return (
     <div
       className={`flex items-center justify-between rounded-xl border px-4 py-3.5 ${
         tone === "long"
           ? "border-long/35 bg-long/[0.08]"
           : tone === "short"
-            ? "border-short/35 bg-short/[0.08]"
-            : "border-line bg-ink-850/60"
+          ? "border-short/35 bg-short/[0.08]"
+          : "border-line bg-ink-850/60"
       }`}
     >
       <div>
@@ -520,8 +589,8 @@ function DraftPanel({
             {remaining <= 0
               ? "The draft expired. Refresh to re-price it against the live market."
               : failures.length
-                ? `Blocked by: ${failures.map((check) => check.code.replace(/_/g, " ")).join(", ")}.`
-                : "Not executable right now."}
+              ? `Blocked by: ${failures.map((check) => check.code.replace(/_/g, " ")).join(", ")}.`
+              : "Not executable right now."}
           </div>
         ) : null}
       </div>

@@ -2,6 +2,10 @@
 
 import type {
   AccountPayload,
+  AgentChatResponse,
+  AgentConfig,
+  AgentPosition,
+  AgentStatus,
   Analysis,
   BarsPayload,
   Blackout,
@@ -168,4 +172,23 @@ export const api = {
     `/news${query({ limit })}`,
   ),
   newsItem: (id: string) => request<NewsDetail>(`/news/${encodeURIComponent(id)}`),
+
+  agentStatus: () => request<AgentStatus>("/agent/status"),
+  agentToggle: (body: { enabled: boolean }) =>
+    request<{ enabled: boolean }>("/agent/toggle", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  agentPositions: () => request<{ positions: AgentPosition[] }>("/agent/positions"),
+  agentConfig: () => request<AgentConfig>("/agent/config"),
+  agentConfigUpdate: (config: Partial<AgentConfig>) =>
+    request<AgentConfig>("/agent/config", {
+      method: "PUT",
+      body: JSON.stringify(config),
+    }),
+  agentChat: (text: string) =>
+    request<AgentChatResponse>(`/agent/chat`, {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    }),
 };

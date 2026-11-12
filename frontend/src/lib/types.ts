@@ -432,3 +432,91 @@ export interface IgniteEvent {
   ts: string;
   [key: string]: unknown;
 }
+
+export interface AgentStatus {
+  enabled: boolean;
+  last_cycle: string | null;
+  next_cycle: string | null;
+  decisions_today: number;
+  executed_today: number;
+  positions_open: number;
+  daily_pnl: number;
+  daily_loss_limit: number;
+}
+
+export interface AgentToggleRequest { enabled: boolean; }
+export interface AgentToggleResponse { enabled: boolean; }
+
+export interface AgentPosition {
+  ticket: string;
+  symbol: string;
+  side: "buy" | "sell";
+  entry_price: number;
+  volume: number;
+  sl: number | null;
+  tp: number | null;
+  trail_sl: number | null;
+  opened_at: string;
+  unrealised_pnl: number;
+  max_favourable_atr: number | null;
+  max_adverse_atr: number | null;
+}
+
+export interface ChatMessage {
+  role: "user" | "agent";
+  content: string;
+  timestamp: string;
+}
+
+export interface AgentConfig {
+  enabled: boolean;
+  symbols: string[];
+  timeframe: string;
+  cycle_interval_min: number;
+  session_open_hour: number;
+  max_concurrent_analyses: number;
+  position_check_interval_sec: number;
+  max_concurrent_positions: number;
+  daily_loss_limit_pct: number;
+  trail_sl_atr: number;
+  scale_in_atr: number;
+  scale_out_levels: number[];
+  max_correlation: number;
+  session_end_hour: number;
+}
+
+export interface AgentChatRequest {
+  text: string;
+}
+
+export interface AgentChatResponse {
+  route: {
+    skill: string;
+    args: Record<string, unknown>;
+    confidence: number;
+  };
+  output: {
+    run_id: string;
+    skill: string;
+    subject: string | null;
+    analysis_id: string | null;
+    narrative: string | null;
+    provider: string | null;
+    model: string | null;
+    status: string;
+    fallback: boolean;
+    created_at: string | null;
+    latency_ms: number | null;
+    cards: { id: string; title: string; version: number; scope: string }[];
+    checks: {
+      ok?: boolean;
+      numbers_checked?: number;
+      violations?: { token: string; context: string }[];
+      style_issues?: string[];
+      template?: boolean;
+      provider_errors?: string[];
+      rejected_text?: string | null;
+    };
+    error: string | null;
+  };
+}
