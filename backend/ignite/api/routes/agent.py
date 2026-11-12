@@ -16,6 +16,7 @@ from backend.ignite.agent.runner import AgentError, AgentOutput, run_skill
 from backend.ignite.api.deps import get_rt
 from backend.ignite.api.errors import ApiError
 from backend.ignite.services.runtime import Runtime
+from backend.ignite.services.analysis_service import start_analysis
 
 router = APIRouter(prefix="/api", tags=["agent"])
 
@@ -180,9 +181,36 @@ def agent_chat(
         raise ApiError(400, "route_failed", str(exc)) from exc
 
     try:
-        output = run_skill(rt, route.skill, route.args.get("analysis_id") or route.args.get("symbol") or "latest", refresh=True)
+        if route.needs_analysis:
+            # Start analysis job
+            symbol = route.args.get("symbol", "XAUUSD")
+            timeframe = route.args.get("timeframe", "M15")
+            job = start_analysis(rt, symbol, timeframe)
+            # Wait for job to complete
+            import time
+            start = time.monotonic()
+            timeout = 120.0
+            while True:
+                job_status = rt.job(job.id)
+                if not job_status:
+                    raise ApiError(500, "job_lost", f"job {job.id} disappeared")
+                if job_status.status == "done":
+                    analysis_id = job_status.analysis_id
+                    break
+                if job_status.status == "failed":
+                    raise ApiError(500, "analysis_failed", job_status.error or "unknown error")
+                if time.monotonic() - start > timeout:
+                    raise ApiError(504, "analysis_timeout", f"analysis job timed out after {timeout}s")
+                time.sleep(0.5)
+            subject = analysis_id
+        else:
+            subject = _skill_subject(rt, route.skill, **route.args)
+
+        output = run_skill(rt, route.skill, subject, refresh=True)
     except AgentError as exc:
         raise ApiError(400, "agent_error", str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise ApiError(500, "agent_error", str(exc)) from exc
 
     return {
         "route": {"skill": route.skill, "args": route.args, "confidence": route.confidence},

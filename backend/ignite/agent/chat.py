@@ -18,51 +18,52 @@ class ChatRoute:
     skill: str
     args: dict[str, Any]
     confidence: float
+    needs_analysis: bool = False  # whether to start analysis first
 
 
 INTENT_PATTERNS = [
-    # analyse XAUUSD M15
+    # analyse XAUUSD M15 - triggers analysis + narrative
     (re.compile(r"\b(?:analyse|analyze|run)\s+([A-Z]{6,7})\s+(M5|M15|M30|H1)\b", re.I),
-     lambda m: ("analysis_narrative", {"symbol": m.group(1).upper(), "timeframe": m.group(2).upper()}, 0.95)),
-    # analyse XAUUSD
+     lambda m: ("analysis_narrative", {"symbol": m.group(1).upper(), "timeframe": m.group(2).upper()}, 0.95, True)),
+    # analyse XAUUSD - triggers analysis + narrative
     (re.compile(r"\b(?:analyse|analyze|run)\s+([A-Z]{6,7})\b", re.I),
-     lambda m: ("analysis_narrative", {"symbol": m.group(1).upper()}, 0.85)),
+     lambda m: ("analysis_narrative", {"symbol": m.group(1).upper()}, 0.85, True)),
     # add EURUSD to watchlist
     (re.compile(r"\badd\s+([A-Z]{6,7})\s+(?:to\s+)?(?:watchlist|watch)\b", re.I),
-     lambda m: ("add_symbol", {"symbol": m.group(1).upper()}, 0.95)),
+     lambda m: ("add_symbol", {"symbol": m.group(1).upper()}, 0.95, False)),
     # remove EURUSD from watchlist
     (re.compile(r"\bremove\s+([A-Z]{6,7})\s+(?:from\s+)?(?:watchlist|watch)\b", re.I),
-     lambda m: ("remove_symbol", {"symbol": m.group(1).upper()}, 0.95)),
+     lambda m: ("remove_symbol", {"symbol": m.group(1).upper()}, 0.95, False)),
     # what's my risk / risk state
     (re.compile(r"\b(?:what'?s|show)\s+(?:my\s+)?risk\b", re.I),
-     lambda m: ("risk_state", {}, 0.9)),
+     lambda m: ("risk_state", {}, 0.9, False)),
     # show positions / open positions
     (re.compile(r"\b(?:show|list)\s+(?:my\s+)?(?:open\s+)?positions?\b", re.I),
-     lambda m: ("positions", {}, 0.9)),
+     lambda m: ("positions", {}, 0.9, False)),
     # show account / account summary
     (re.compile(r"\b(?:show|what'?s)\s+(?:my\s+)?account\b", re.I),
-     lambda m: ("account_snapshot", {}, 0.9)),
+     lambda m: ("account_snapshot", {}, 0.9, False)),
     # show history / trade history
     (re.compile(r"\b(?:show|list)\s+(?:my\s+)?(?:trade\s+)?history\b", re.I),
-     lambda m: ("trade_history", {}, 0.9)),
+     lambda m: ("trade_history", {}, 0.9, False)),
     # show calendar / economic calendar
     (re.compile(r"\b(?:show|list)\s+(?:economic\s+)?calendar\b", re.I),
-     lambda m: ("calendar", {}, 0.9)),
+     lambda m: ("calendar", {}, 0.9, False)),
     # show news
     (re.compile(r"\b(?:show|list)\s+news\b", re.I),
-     lambda m: ("news", {}, 0.9)),
+     lambda m: ("news", {}, 0.9, False)),
     # daily brief
     (re.compile(r"\b(?:daily\s+)?brief\b", re.I),
-     lambda m: ("daily_brief", {}, 0.9)),
+     lambda m: ("daily_brief", {}, 0.9, False)),
     # postmortem
     (re.compile(r"\bpostmortem\b", re.I),
-     lambda m: ("postmortem", {}, 0.9)),
+     lambda m: ("postmortem", {}, 0.9, False)),
     # news bias
     (re.compile(r"\bnews\s+bias\b", re.I),
-     lambda m: ("news_bias", {}, 0.9)),
+     lambda m: ("news_bias", {}, 0.9, False)),
     # draft review
     (re.compile(r"\b(?:review|check)\s+draft\b", re.I),
-     lambda m: ("draft_review", {}, 0.9)),
+     lambda m: ("draft_review", {}, 0.9, False)),
 ]
 
 
@@ -72,10 +73,10 @@ def route_chat(text: str) -> ChatRoute | None:
     for pattern, builder in INTENT_PATTERNS:
         match = pattern.search(text)
         if match:
-            skill_id, args, confidence = builder(match)
+            skill_id, args, confidence, needs_analysis = builder(match)
             try:
                 get_skill(skill_id)
-                return ChatRoute(skill=skill_id, args=args, confidence=confidence)
+                return ChatRoute(skill=skill_id, args=args, confidence=confidence, needs_analysis=needs_analysis)
             except UnknownSkill:
                 continue
     return None
