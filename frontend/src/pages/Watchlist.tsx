@@ -164,7 +164,7 @@ export default function Watchlist() {
 
   return (
     <div className="grid grid-cols-1 gap-4 xl:grid-cols-[264px_minmax(0,1fr)]">
-      <div className="space-y-3">
+      <div className="space-y-3 overflow-y-auto max-h-[calc(100vh-4rem)]">
         <Panel title="Watchlist" subtitle="Mirrors MT5 Market Watch" bodyClassName="p-2">
           {symbols.length === 0 ? (
             <div className="px-2 py-3 text-[12px] text-fog">
