@@ -22,6 +22,7 @@ import type { Analysis } from "../lib/types";
 import CandleChart from "../components/CandleChart";
 import AnalysisDrawer from "../components/AnalysisDrawer";
 import ExecutionDialog from "../components/ExecutionDialog";
+import AgentPanel from "../components/AgentPanel";
 import { useToast } from "../components/Toast";
 import { Badge, Button, EmptyState, Panel, ProgressBar, Spinner } from "../components/ui";
 import { AlertIcon, BoltIcon, PlusIcon, RefreshIcon, XIcon } from "../components/icons";
@@ -271,6 +272,8 @@ export default function Watchlist() {
           )}
         </Panel>
       </div>
+
+      <AgentPanel />
 
       <div className="min-w-0 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line/80 bg-ink-850/70 px-4 py-3 shadow-panel">
