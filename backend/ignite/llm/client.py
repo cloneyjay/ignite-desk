@@ -48,9 +48,30 @@ class LLMResult:
     completion_tokens: int | None = None
 
 
-def _text_of(content: Any) -> str:
-    if isinstance(content, str):
-        return content
+def _text_of(message: dict[str, Any]) -> str:
+    """Extract text from a message, handling both content and reasoning_content (Nemotron)."""
+    if not isinstance(message, dict):
+        return ""
+    # Prefer standard content (Nemotron puts the actual answer here)
+    content = message.get("content")
+    if isinstance(content, str) and content.strip():
+        # Nemotron sometimes puts reasoning in content for correction prompts.
+        # Detect and fall back to reasoning_content.
+        lower = content.strip().lower()
+        if not (lower.startswith("the user wants") or 
+                lower.startswith("let me") or 
+                lower.startswith("i need to") or
+                lower.startswith("i should") or
+                lower.startswith("i will") or
+                lower.startswith("first,") or
+                lower.startswith("okay") or
+                lower.startswith("sure")):
+            return content.strip()
+    # Fall back to reasoning_content if content is empty or looks like reasoning
+    reasoning = message.get("reasoning_content")
+    if isinstance(reasoning, str) and reasoning.strip():
+        return reasoning.strip()
+    # Handle list content
     if isinstance(content, list):
         parts = []
         for item in content:
@@ -164,7 +185,7 @@ class LLMClient:
         choices = data.get("choices") or []
         if not choices:
             raise LLMError("response contains no choices")
-        text = _text_of((choices[0].get("message") or {}).get("content")).strip()
+        text = _text_of(choices[0].get("message") or {}).strip()
         if not text:
             raise LLMError("response is empty")
         usage = data.get("usage") or {}

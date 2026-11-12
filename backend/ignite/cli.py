@@ -23,6 +23,7 @@ from backend.ignite.llm import LLMClient
 from backend.ignite.market.time import Clock
 from backend.ignite.mcp.client import MCPClient, MCPError
 from backend.ignite.store.db import Store
+from backend.ignite.validation.walkforward import run_walk_forward
 
 
 def _account_equity(mcp: MCPClient) -> float:
@@ -279,8 +280,43 @@ def main() -> int:
     knowledge_sub.add_parser("reload", help="load the card directory into SQLite")
     p_knowledge.set_defaults(func=cmd_knowledge)
 
+    p_wf = sub.add_parser("walkforward", help="run walk-forward validation")
+    p_wf.add_argument("--symbol", default="XAUUSD")
+    p_wf.add_argument("--tf", default="M15", choices=["M5", "M15", "M30", "H1"])
+    p_wf.add_argument("--days", type=int, default=180)
+    p_wf.set_defaults(func=cmd_walkforward)
+
     args = parser.parse_args()
     return args.func(args)
+
+
+def cmd_walkforward(args: argparse.Namespace) -> int:
+    settings = load_settings()
+    client = ForecastClient(settings.kronos_worker_url)
+    try:
+        health = client.health()
+        if not health.get("ready"):
+            print("kronos worker is not ready", file=sys.stderr)
+            return 2
+    except ForecastError as exc:
+        print(f"kronos worker unreachable: {exc}", file=sys.stderr)
+        print("start it with: python -m backend.ignite.forecasting.worker", file=sys.stderr)
+        return 2
+
+    try:
+        with MCPClient(settings.mcp.url, settings.mcp.headers, settings.mcp.timeout_s) as mcp:
+            clock = Clock.from_mcp(mcp)
+            run_walk_forward(
+                symbol=args.symbol,
+                timeframe=args.tf,
+                days_back=args.days,
+            )
+    except (MCPError, RuntimeError, ValueError) as exc:
+        print(f"walk-forward failed: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        client.close()
+    return 0
 
 
 if __name__ == "__main__":

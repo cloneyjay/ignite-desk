@@ -1,4 +1,4 @@
-"""Agent endpoints: narrative commentary, run log, knowledge inspection.
+"""Agent endpoints: narrative commentary, run log, knowledge inspection, chat.
 
 The narrative endpoint has no execution path. It cannot change a signal, a
 draft, or a guard; it only explains a stored analysis.
@@ -11,6 +11,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
+from backend.ignite.agent.chat import ChatRoute, route_or_error
 from backend.ignite.agent.runner import AgentError, AgentOutput, run_skill
 from backend.ignite.api.deps import get_rt
 from backend.ignite.api.errors import ApiError
@@ -19,6 +20,7 @@ from backend.ignite.services.runtime import Runtime
 router = APIRouter(prefix="/api", tags=["agent"])
 
 NARRATIVE = "analysis_narrative"
+SKILLS = ("analysis_narrative", "daily_brief", "news_bias", "draft_review", "postmortem")
 
 
 def _analysis_or_404(rt: Runtime, analysis_id: str) -> dict[str, Any]:
@@ -161,3 +163,64 @@ def knowledge_card(card_id: str, rt: Runtime = Depends(get_rt)) -> dict[str, Any
     if card is None:
         raise ApiError(404, "card_not_found", f"no knowledge card {card_id}")
     return {"card": card}
+
+
+class ChatRequest(BaseModel):
+    text: str
+
+
+@router.post("/agent/chat")
+def agent_chat(
+    body: ChatRequest, rt: Runtime = Depends(get_rt)
+) -> dict[str, Any]:
+    """Route a natural-language request to the appropriate skill."""
+    try:
+        route: ChatRoute = route_or_error(body.text)
+    except ValueError as exc:
+        raise ApiError(400, "route_failed", str(exc)) from exc
+
+    try:
+        output = run_skill(rt, route.skill, route.args.get("analysis_id") or route.args.get("symbol") or "latest", refresh=True)
+    except AgentError as exc:
+        raise ApiError(400, "agent_error", str(exc)) from exc
+
+    return {
+        "route": {"skill": route.skill, "args": route.args, "confidence": route.confidence},
+        "output": output.payload(),
+    }
+
+
+def _skill_subject(rt: Runtime, skill: str, **kwargs) -> str:
+    if skill == "analysis_narrative":
+        analysis_id = kwargs.get("analysis_id")
+        if not analysis_id:
+            row = rt.store.latest_analysis(kwargs.get("symbol", "XAUUSD"), kwargs.get("tf", "M15"))
+            analysis_id = row["id"] if row else None
+        return analysis_id or "latest"
+    return kwargs.get("subject", "latest")
+
+
+def _skill_endpoint(skill: str):
+    def endpoint(
+        rt: Runtime = Depends(get_rt),
+        symbol: str = Query("XAUUSD"),
+        tf: str = Query("M15"),
+        analysis_id: str | None = Query(None),
+        subject: str | None = Query(None),
+        refresh: bool = Query(False),
+    ) -> dict[str, Any]:
+        subj = _skill_subject(rt, skill, symbol=symbol, tf=tf, analysis_id=analysis_id, subject=subject)
+        try:
+            output = run_skill(rt, skill, subj, refresh=refresh)
+        except AgentError as exc:
+            raise ApiError(400, "agent_error", str(exc)) from exc
+        return output.payload()
+
+    return endpoint
+
+
+for skill in SKILLS:
+    if skill == "analysis_narrative":
+        continue
+    router.post(f"/agent/{skill}")(_skill_endpoint(skill))
+    router.get(f"/agent/{skill}")(_skill_endpoint(skill))

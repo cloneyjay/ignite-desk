@@ -15,17 +15,31 @@ from typing import Any, Callable
 
 from backend.ignite.agent.context import ContextError, ContextPack
 from backend.ignite.agent.registry import SkillSpec, get_skill
-from backend.ignite.agent.skills import analysis_narrative
+from backend.ignite.agent.skills import (
+    analysis_narrative,
+    daily_brief,
+    draft_review,
+    news_bias,
+    postmortem,
+)
 from backend.ignite.agent.validators import collect_numbers, validate_text
 from backend.ignite.knowledge.card import RenderError, render_card
 from backend.ignite.store.db import utc_now
 
 BUILDERS: dict[str, Callable[[Any, str], ContextPack]] = {
     analysis_narrative.SPEC.id: analysis_narrative.build_context,
+    daily_brief.SPEC.id: daily_brief.build_context,
+    draft_review.SPEC.id: draft_review.build_context,
+    news_bias.SPEC.id: news_bias.build_context,
+    postmortem.SPEC.id: postmortem.build_context,
 }
 
 TEMPLATES: dict[str, Callable[[ContextPack], str]] = {
     analysis_narrative.SPEC.id: analysis_narrative.template_narrative,
+    daily_brief.SPEC.id: daily_brief.template_narrative,
+    draft_review.SPEC.id: draft_review.template_narrative,
+    news_bias.SPEC.id: news_bias.template_narrative,
+    postmortem.SPEC.id: postmortem.template_narrative,
 }
 
 
@@ -133,8 +147,10 @@ def _correction(checks: dict[str, Any]) -> str:
     )
     return (
         "Your previous draft failed validation: "
-        f"{joined}. Rewrite it in 2-4 plain sentences. Use only numbers that appear "
-        "verbatim in CONTEXT or the desk notes, and do not add a number that is not there."
+        f"{joined}. Output ONLY the corrected 2-4 sentence commentary. "
+        "No reasoning, no planning, no meta-commentary. "
+        "Use only numbers that appear verbatim in CONTEXT or the desk notes. "
+        "Do not add a number that is not there."
     )
 
 

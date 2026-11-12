@@ -47,7 +47,7 @@ class LLMSettings:
     extra_api_key: str = ""
     extra_model: str = ""
     timeout_s: float = 20.0
-    max_tokens: int = 320
+    max_tokens: int = 2000
 
     def key_for(self, provider: str) -> str:
         return {
@@ -110,7 +110,7 @@ def load_settings() -> Settings:
                 "NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"
             ).rstrip("/"),
             nim_api_key=os.getenv("NVIDIA_API_KEY", "").strip(),
-            nim_model=os.getenv("NVIDIA_MODEL", "meta/llama-3.3-70b-instruct"),
+            nim_model=os.getenv("NVIDIA_MODEL", "meta/llama-3.1-70b-instruct"),
             local_base_url=os.getenv(
                 "OLLAMA_BASE_URL", "http://127.0.0.1:11434/v1"
             ).rstrip("/"),
