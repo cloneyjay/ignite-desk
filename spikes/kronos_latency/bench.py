@@ -49,8 +49,10 @@ TF_MINUTES = {"M1": 1, "M5": 5, "M15": 15, "M30": 30, "H1": 60, "H4": 240, "D1":
 def synth_bars(tf_minutes: int, n: int, seed: int = 7) -> pd.DataFrame:
     """Deterministic XAUUSD-like OHLCV. Latency is data-independent; shape is not."""
     rng = np.random.default_rng(seed)
-    idx = pd.date_range("2026-01-02", periods=n * 2, freq=f"{tf_minutes}min")
+    idx = pd.date_range("2026-01-02", periods=max(n * 4, n + 2000), freq=f"{tf_minutes}min")
     idx = idx[idx.day_of_week < 5][:n]
+    if len(idx) < n:
+        raise RuntimeError(f"not enough weekday bars generated: {len(idx)} < {n}")
 
     scale = np.sqrt(tf_minutes / 60.0)
     ret = rng.normal(0.0, 0.0012 * scale, n)

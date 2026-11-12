@@ -58,8 +58,8 @@ Results go to `spikes/kronos_latency/results.md`.
 ## Status
 
 - [x] Repo scaffold
-- [ ] P0 latency spike
-- [ ] PRD + architecture spec
+- [x] P0 latency spike (Kronos-mini selected)
+- [x] PRD + architecture spec
 - [ ] P1 backend core
 - [ ] P2 dashboard MVP
 - [ ] P3 news & calendar

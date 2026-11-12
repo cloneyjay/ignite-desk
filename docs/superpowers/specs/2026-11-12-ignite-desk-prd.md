@@ -419,13 +419,14 @@ Target machine: i5-5300U, 4 cores, 12 GB RAM, no CUDA. Kronos on CPU, `torch 2.1
 | Portfolio load (cached) | < 2 s | account + positions + snapshots |
 | Equity chart load | < 1 s | 1 440 snapshots |
 | Bars fetch (288) | < 1 s | MCP round-trip |
-| Analysis, M15, 25 samples | **14.3 s** measured (Kronos-mini) | target < 60 s |
-| Analysis, M5, 25 samples | see Appendix A | must stay under ~120 s |
+| Analysis, M15, 25 samples | **14.3 s** measured | target < 60 s |
+| Analysis, M5, 25 samples | **14.8 s** measured | must stay under ~120 s |
 | Forecast cache hit | < 100 ms | keyed by closed bar |
 
-Model selection is driven by Appendix A: the smallest checkpoint that stays inside the
-budget wins, because forecast quality for XAUUSD must be validated separately by
-walk-forward testing before it justifies a larger model.
+**Selected model: `Kronos-mini` (4.1M).** It is 4.8× faster than `Kronos-small` at an
+identical input shape (14.3 s vs 69.0 s for 25 paths) and leaves ~4.5 minutes of headroom on
+a 5-minute bar. Forecast quality for XAUUSD is unproven for every checkpoint, so the extra
+cost of a larger model is not justified until walk-forward testing demonstrates it.
 
 ## 13. Testing
 
@@ -464,4 +465,19 @@ walk-forward testing before it justifies a larger model.
 
 ## Appendix A — P0 latency measurements
 
-_(Filled from `spikes/kronos_latency/out/`; see `spikes/kronos_latency/results.md`.)_
+Target machine: i5-5300U (2C/4T), 12 GB RAM, no CUDA, `torch 2.15.0+cpu`.
+Harness: `spikes/kronos_latency/bench.py`. Synthetic OHLCV; latency depends on tensor shape,
+not price values. Lookback 288, horizon 12, `T=1.0`, `top_p=0.9`, torch default threads.
+
+| Model | TF | Load (cached) | Per sample | 25-path analysis | RSS |
+|---|---|---|---|---|---|
+| **Kronos-mini** (4.1M) | M15 | 36.5 s cold / 1.7–3.0 s warm | **0.56 s** | **14.3 s** | 306 MB |
+| **Kronos-mini** (4.1M) | M5 | 1.7 s | 0.61 s | 14.8 s | 292 MB |
+| Kronos-small (24.7M) | M15 | 2.7 s | 2.81 s | 69.0 s | 371 MB |
+| Kronos-base (102M) | M15 | not completed | — | — | — |
+
+M5 and M15 cost the same because the tensors have the same shape. Sequential and batched
+sampling also cost the same — the bottleneck is the autoregressive loop, not the batch
+dimension. Base was cancelled and is not quoted.
+
+**Decision: Kronos-mini.** Full write-up in `spikes/kronos_latency/results.md`.

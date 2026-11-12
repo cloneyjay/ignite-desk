@@ -35,3 +35,6 @@ models/
 Thumbs.db
 .idea/
 .vscode/
+
+# Private working notes
+founders/
