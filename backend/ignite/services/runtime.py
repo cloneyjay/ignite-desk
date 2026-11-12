@@ -16,6 +16,7 @@ from typing import Any
 
 import httpx
 
+from backend.ignite.agent.config import AgentConfig
 from backend.ignite.analysis.features import Features
 from backend.ignite.analysis.risk import RiskConfig, SymbolSpec
 from backend.ignite.config import Settings
@@ -116,6 +117,8 @@ class Runtime:
                 if code.strip()
             ),
         )
+
+        self.agent_config = AgentConfig.from_env()
 
     # ----------------------------------------------------------------- lifecycle
 

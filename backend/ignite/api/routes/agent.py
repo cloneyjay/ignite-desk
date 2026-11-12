@@ -6,17 +6,20 @@ draft, or a guard; it only explains a stored analysis.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from backend.ignite.agent.chat import ChatRoute, route_or_error
+from backend.ignite.agent.config import AgentConfig
 from backend.ignite.agent.runner import AgentError, AgentOutput, run_skill
 from backend.ignite.api.deps import get_rt
 from backend.ignite.api.errors import ApiError
 from backend.ignite.services.runtime import Runtime
 from backend.ignite.services.analysis_service import start_analysis
+from backend.ignite.store.db import utc_now
 
 router = APIRouter(prefix="/api", tags=["agent"])
 
@@ -216,6 +219,118 @@ def agent_chat(
         "route": {"skill": route.skill, "args": route.args, "confidence": route.confidence},
         "output": output.payload(),
     }
+
+
+# =============================================================================
+# Agent Status, Toggle, Positions, Config
+# =============================================================================
+
+
+class ToggleRequest(BaseModel):
+    enabled: bool
+
+
+class ConfigRequest(BaseModel):
+    cycle_interval_min: int | None = None
+    daily_loss_limit_pct: float | None = None
+    trail_sl_atr: float | None = None
+    scale_in_atr: float | None = None
+    scale_out_levels: list[float] | None = None
+    max_correlation: float | None = None
+    session_end_hour: int | None = None
+    symbols: list[str] | None = None
+
+
+@router.get("/agent/status")
+def agent_status(rt: Runtime = Depends(get_rt)) -> dict[str, Any]:
+    config = rt.store.agent_config() or {"enabled": False}
+    today = datetime.now(timezone.utc).date().isoformat()
+    decisions = rt.store.agent_decisions(limit=1000)
+    decisions_today = len([d for d in decisions if d["created_at"].startswith(today)])
+    executed_today = len([d for d in decisions if d.get("executed") and d["created_at"].startswith(today)])
+    positions = rt.store.agent_positions()
+
+    # Compute next cycle time
+    from datetime import timedelta
+    now = datetime.now(timezone.utc)
+    next_cycle = _compute_next_cycle(now, rt.agent_config)
+
+    return {
+        "enabled": bool(config.get("enabled")),
+        "last_cycle": rt.store.setting("agent_last_cycle"),
+        "next_cycle": next_cycle.isoformat() if next_cycle else None,
+        "decisions_today": decisions_today,
+        "executed_today": executed_today,
+        "positions_open": len(positions),
+        "daily_pnl": sum(p.get("realised_pnl", 0) for p in positions),
+        "daily_loss_limit": rt.agent_config.daily_loss_limit_pct,
+    }
+
+
+def _compute_next_cycle(now: datetime, config: AgentConfig) -> datetime | None:
+    if not config.enabled:
+        return None
+    # Next session open
+    session_open = now.replace(hour=config.session_open_hour, minute=0, second=0, microsecond=0)
+    if now >= session_open:
+        session_open += timedelta(days=1)
+    # Next interval
+    next_interval = now.replace(minute=(now.minute // config.cycle_interval_min + 1) * config.cycle_interval_min, second=0, microsecond=0)
+    if next_interval < now:
+        next_interval += timedelta(minutes=config.cycle_interval_min)
+    return min(session_open, next_interval)
+
+
+@router.post("/agent/toggle")
+def agent_toggle(body: ToggleRequest, rt: Runtime = Depends(get_rt)) -> dict[str, Any]:
+    enabled = body.enabled
+    import json
+    config_json = json.dumps(rt.agent_config.__dict__)
+    rt.store.set_agent_config(enabled, config_json)
+    rt.events.publish("agent.toggled", {"enabled": enabled})
+    return {"enabled": enabled}
+
+
+@router.get("/agent/positions")
+def agent_positions(rt: Runtime = Depends(get_rt)) -> dict[str, Any]:
+    return {"positions": rt.store.agent_positions()}
+
+
+@router.get("/agent/positions/{ticket}")
+def agent_position(ticket: str, rt: Runtime = Depends(get_rt)) -> dict[str, Any]:
+    pos = rt.store.agent_position(ticket)
+    if not pos:
+        raise ApiError(404, "not_found", f"no agent position {ticket}")
+    return {"position": pos}
+
+
+@router.post("/agent/positions/{ticket}/close")
+def close_agent_position(ticket: str, rt: Runtime = Depends(get_rt)) -> dict[str, Any]:
+    pos = rt.store.agent_position(ticket)
+    if not pos:
+        raise ApiError(404, "not_found", f"no agent position {ticket}")
+    # Execute close via MCP
+    from backend.ignite.services.broker import close_position
+    result = close_position(rt.mcp, ticket)
+    if result.get("ok"):
+        rt.store.close_agent_position(ticket, "MANUAL", 0.0, 0.0)
+    return {"ok": result.get("ok"), "result": result}
+
+
+@router.get("/agent/config")
+def agent_config_get(rt: Runtime = Depends(get_rt)) -> dict[str, Any]:
+    return rt.agent_config.__dict__
+
+
+@router.put("/agent/config")
+def agent_config_put(body: ConfigRequest, rt: Runtime = Depends(get_rt)) -> dict[str, Any]:
+    config = rt.agent_config
+    updates = body.model_dump(exclude_unset=True)
+    for key, value in updates.items():
+        if hasattr(config, key):
+            setattr(config, key, value)
+    rt.store.set_agent_config(config.enabled, config.model_dump_json())
+    return config.__dict__
 
 
 def _skill_subject(rt: Runtime, skill: str, **kwargs) -> str:
