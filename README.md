@@ -32,7 +32,7 @@ ignite-desk/
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r spikes\kronos_latency\requirements.txt
+pip install -r backend\requirements.txt
 
 copy .env.example .env      # fill MT5_MCP_TOKEN and keys
 ```
@@ -41,6 +41,45 @@ Kronos lives in `vendor/kronos` (submodule). Clone with:
 
 ```powershell
 git submodule update --init --recursive
+```
+
+### Run the backend
+
+Two processes: the Kronos worker and the CLI/API.
+
+```powershell
+# terminal 1 - model worker on 127.0.0.1:8765
+.\.venv\Scripts\python.exe -m backend.ignite.forecasting.worker
+
+# terminal 2 - check both sides
+.\.venv\Scripts\python.exe -m backend.ignite.cli health
+
+# run one analysis (25 sampled paths)
+.\.venv\Scripts\python.exe -m backend.ignite.cli analyse --symbol XAUUSD --tf M15 --save
+```
+
+Example output:
+
+```
+Ignite Desk  |  XAUUSD M15  |  2026-11-12T08:58:12+00:00
+bars         288 closed   2026-11-09 02:45:00 -> 2026-11-12 08:30:00 UTC
+price        3941.54   ATR 8.804   spread 13 pts   trend down
+forecast     25 paths x 12 bars   Kronos-mini   14.2s
+distribution p_up 0.76   edge +7.54 (+0.86 ATR)   target 3950.23  p10 3936.04  p90 3960.02
+signal       LONG
+draft        0.01 lots   entry ~3931.06   SL 3917.85   TP 3957.47
+risk         13.21 USD (0.449%)   R:R 2.00
+blocked      price drifted 1.19 ATR from the last closed bar (3941.54 -> 3931.06), max 0.30
+```
+
+The last line is the drift guard doing its job: the signal was valid at the last
+closed bar, but price had already run by more than the allowed fraction of ATR, so
+the draft is not executable.
+
+Tests:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
 ## P0 spike: Kronos CPU latency
@@ -60,7 +99,7 @@ Results go to `spikes/kronos_latency/results.md`.
 - [x] Repo scaffold
 - [x] P0 latency spike (Kronos-mini selected)
 - [x] PRD + architecture spec
-- [ ] P1 backend core
+- [ ] P1 backend core (MCP client, bars, analysis graph, CLI: done; API + execution: next)
 - [ ] P2 dashboard MVP
 - [ ] P3 news & calendar
 - [ ] P4 hardening / walk-forward

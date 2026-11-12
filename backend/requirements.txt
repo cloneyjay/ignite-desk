@@ -1,0 +1,13 @@
+# Backend runtime deps. Unpinned on purpose: Python 3.14 needs current wheels.
+fastapi
+uvicorn[standard]
+httpx
+python-dotenv
+pandas
+numpy
+torch
+einops
+huggingface_hub
+safetensors
+psutil
+pytest
