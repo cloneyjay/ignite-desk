@@ -47,6 +47,47 @@ def quote(mcp: MCPClient, symbol: str) -> tuple[float, float]:
     return float(bid), float(ask)
 
 
+def spread_points(bid: float, ask: float, point: float) -> float:
+    if point <= 0:
+        return 0.0
+    return max(0.0, (ask - bid) / point)
+
+
+def calc_margin(
+    mcp: MCPClient, symbol: str, side: str, volume: float, price: float
+) -> float:
+    payload = mcp.call_tool(
+        "trade_order_calc_margin",
+        {"symbol": symbol, "type": side, "volume": volume, "price": price},
+    )
+    if not payload.get("ok") or payload.get("margin") is None:
+        raise SymbolError(f"margin calculation failed: {payload}")
+    return float(payload["margin"])
+
+
+def calc_profit(
+    mcp: MCPClient,
+    symbol: str,
+    side: str,
+    volume: float,
+    price_open: float,
+    price_close: float,
+) -> float:
+    payload = mcp.call_tool(
+        "trade_order_calc_profit",
+        {
+            "symbol": symbol,
+            "type": side,
+            "volume": volume,
+            "price_open": price_open,
+            "price_close": price_close,
+        },
+    )
+    if not payload.get("ok") or payload.get("profit") is None:
+        raise SymbolError(f"profit calculation failed: {payload}")
+    return float(payload["profit"])
+
+
 def add_to_watchlist(mcp: MCPClient, symbol: str) -> SymbolSpec:
     try:
         mcp.call_tool("add_marketwatch_symbol", {"symbol": symbol, "show": True})

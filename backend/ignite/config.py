@@ -43,6 +43,9 @@ class Settings:
     timezone: str
     draft_ttl_s: int = 90
     max_drift_atr: float = 0.30
+    news_pre_minutes: int = 30
+    news_post_minutes: int = 15
+    news_currencies: str = "USD,EUR,CNH,JPY"
 
 
 def load_settings() -> Settings:
@@ -65,4 +68,7 @@ def load_settings() -> Settings:
         timezone=os.getenv("IGNITE_TZ", "local"),
         draft_ttl_s=int(os.getenv("IGNITE_DRAFT_TTL_S", "90")),
         max_drift_atr=float(os.getenv("IGNITE_MAX_DRIFT_ATR", "0.30")),
+        news_pre_minutes=int(os.getenv("IGNITE_NEWS_PRE_MIN", "30")),
+        news_post_minutes=int(os.getenv("IGNITE_NEWS_POST_MIN", "15")),
+        news_currencies=os.getenv("IGNITE_NEWS_CURRENCIES", "USD,EUR,CNH,JPY"),
     )

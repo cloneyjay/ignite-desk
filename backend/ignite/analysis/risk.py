@@ -48,6 +48,8 @@ class DraftPlan:
     tp_distance: float
     blocked: bool
     block_reason: str | None
+    margin: float | None = None
+    worst_case_usd: float | None = None
     reasons: tuple[str, ...] = field(default_factory=tuple)
     version: str = "risk.v1"
 

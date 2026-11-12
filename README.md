@@ -82,6 +82,47 @@ Tests:
 .\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
+## API (P1)
+
+```powershell
+# terminal 3 - API on 127.0.0.1:8000
+.\.venv\Scripts\python.exe -m backend.ignite.api
+```
+
+Interactive docs: `http://127.0.0.1:8000/api/docs`
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/health` | MCP, terminal, Kronos, kill switch, clock |
+| GET | `/api/account` | balance/equity/positions, open risk, today's P/L |
+| GET | `/api/portfolio/equity?range=1d\|1w\|1m\|all` | equity snapshots |
+| GET | `/api/positions` | open positions |
+| GET/POST | `/api/symbols`, `DELETE /api/symbols/{s}` | watchlist (mirrors MT5 Market Watch) |
+| GET | `/api/bars?symbol&tf&count` | closed bars, UTC |
+| POST | `/api/analyses` | start an analysis job (202 + `job_id`) |
+| GET | `/api/jobs/{id}` | job progress / result |
+| GET | `/api/analyses/{id}`, `/api/analyses/latest?symbol&tf` | stored analysis + fan paths + draft |
+| POST | `/api/analyses/{id}/draft` | mint a fresh draft for an existing analysis |
+| GET | `/api/drafts/{id}` | draft + live executability checks |
+| POST | `/api/drafts/{id}/confirm` | opens the 90 s window, returns a single-use token |
+| POST | `/api/drafts/{id}/execute` | `{confirm: true, token}` - re-validates, then sends |
+| GET | `/api/trades`, `/api/stats`, `/api/orders` | history, stats, local order audit |
+| GET | `/api/calendar`, `/api/blackouts`, `/api/news` | MT5 calendar/news, deterministic blackouts |
+| GET/PUT | `/api/settings` | kill switch, risk %, limits |
+| GET | `/api/events` | SSE: analysis progress, draft, fill, kill switch |
+
+Execution is a three-step handshake by design:
+
+```
+GET  /api/drafts/{id}            -> checks[] and executable flag
+POST /api/drafts/{id}/confirm    -> {token} (bound to the draft, expires with it)
+POST /api/drafts/{id}/execute    -> {confirm: true, token}
+```
+
+The backend re-validates everything at execute time: state, expiry, kill switch,
+price drift, spread, open position on the symbol, margin, economic blackout,
+`trade_check_market_order`. The LLM has no path to this endpoint.
+
 ## P0 spike: Kronos CPU latency
 
 Decides which Kronos checkpoint is viable for day trading on this machine
@@ -99,8 +140,9 @@ Results go to `spikes/kronos_latency/results.md`.
 - [x] Repo scaffold
 - [x] P0 latency spike (Kronos-mini selected)
 - [x] PRD + architecture spec
-- [ ] P1 backend core (MCP client, bars, analysis graph, CLI: done; API + execution: next)
+- [x] P1 backend core (MCP client, bars, analysis graph, CLI)
+- [x] P1 API: REST + SSE, confirmation-token execution, calendar/blackouts
 - [ ] P2 dashboard MVP
-- [ ] P3 news & calendar
+- [ ] P3 news narrative / agent chat
 - [ ] P4 hardening / walk-forward
 - [ ] P5 multi-symbol

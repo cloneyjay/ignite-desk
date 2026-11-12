@@ -1,3 +1,16 @@
+CREATE TABLE IF NOT EXISTS symbols (
+    symbol          TEXT PRIMARY KEY,
+    digits          INTEGER NOT NULL,
+    point           REAL NOT NULL,
+    contract_size   REAL NOT NULL,
+    tick_value      REAL NOT NULL DEFAULT 0,
+    volume_min      REAL NOT NULL,
+    volume_max      REAL NOT NULL,
+    volume_step     REAL NOT NULL,
+    stops_level     INTEGER NOT NULL DEFAULT 0,
+    added_at        TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS analyses (
     id              TEXT PRIMARY KEY,
     created_at      TEXT NOT NULL,
@@ -45,10 +58,14 @@ CREATE TABLE IF NOT EXISTS drafts (
     risk_usd        REAL,
     risk_pct        REAL,
     rr              REAL,
+    margin          REAL,
+    worst_case_usd  REAL,
     blocked         INTEGER NOT NULL DEFAULT 0,
     block_reason    TEXT,
     idempotency_key TEXT NOT NULL UNIQUE
 );
+
+CREATE INDEX IF NOT EXISTS idx_drafts_analysis ON drafts (analysis_id);
 
 CREATE TABLE IF NOT EXISTS orders (
     id              TEXT PRIMARY KEY,
@@ -62,9 +79,14 @@ CREATE TABLE IF NOT EXISTS orders (
     sl              REAL,
     tp              REAL,
     ticket          TEXT,
+    position_id     TEXT,
     state           TEXT NOT NULL,
+    comment         TEXT,
+    error           TEXT,
     broker_json     TEXT
 );
+
+CREATE INDEX IF NOT EXISTS idx_orders_draft ON orders (draft_id);
 
 CREATE TABLE IF NOT EXISTS equity_snapshots (
     ts          TEXT PRIMARY KEY,
@@ -77,4 +99,13 @@ CREATE TABLE IF NOT EXISTS equity_snapshots (
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          TEXT NOT NULL,
+    actor       TEXT NOT NULL,
+    action      TEXT NOT NULL,
+    payload     TEXT,
+    result      TEXT
 );
