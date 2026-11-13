@@ -854,8 +854,9 @@ class Store:
                 ticket, symbol, side, entry_price, volume, sl, tp, opened_at,
                 managed_by_agent, trail_sl, scale_in_count, scale_out_count,
                 max_favourable_atr, max_adverse_atr, last_managed_at,
-                closed_at, close_reason, realised_pnl, r_multiple
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                closed_at, close_reason, realised_pnl, r_multiple,
+                last_synced_at, broker_snapshot_json, status
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(ticket) DO UPDATE SET
                 symbol=excluded.symbol,
                 side=excluded.side,
@@ -873,7 +874,10 @@ class Store:
                 closed_at=excluded.closed_at,
                 close_reason=excluded.close_reason,
                 realised_pnl=excluded.realised_pnl,
-                r_multiple=excluded.r_multiple
+                r_multiple=excluded.r_multiple,
+                last_synced_at=excluded.last_synced_at,
+                broker_snapshot_json=excluded.broker_snapshot_json,
+                status=excluded.status
             """,
             (
                 pos["ticket"],
@@ -895,6 +899,9 @@ class Store:
                 pos.get("close_reason"),
                 pos.get("realised_pnl"),
                 pos.get("r_multiple"),
+                pos.get("last_synced_at"),
+                pos.get("broker_snapshot_json"),
+                pos.get("status", "open"),
             ),
         )
         self._conn.commit()
@@ -916,7 +923,7 @@ class Store:
         self._conn.execute(
             """
             UPDATE agent_positions SET
-                closed_at=?, close_reason=?, realised_pnl=?, r_multiple=?
+                closed_at=?, close_reason=?, realised_pnl=?, r_multiple=?, status='closed'
             WHERE ticket=?
             """,
             (utc_now(), close_reason, realised_pnl, r_multiple, ticket),

@@ -26,6 +26,8 @@ class FakeMCP:
         self.bid = 3930.0
         self.ask = 3930.13
         self.positions: list[dict[str, Any]] = []
+        self.positions_override: list[dict[str, Any]] | None = None
+        self.closed_trades_override: list[dict[str, Any]] | None = None
         self.send_ok = True
         self.check_ok = True
         self.margin = 7.82
@@ -80,6 +82,8 @@ class FakeMCP:
                 "terminal": {"connection": {"state": "synchronized"}, "build": 1},
             }
         if name == "get_trading_open_positions":
+            if self.positions_override is not None:
+                return {"positions": [dict(p) for p in self.positions_override]}
             return {"positions": [dict(p) for p in self.positions]}
         if name == "trade_order_calc_margin":
             return {"ok": True, "margin": self.margin, "currency": "USD"}
@@ -151,6 +155,12 @@ class FakeMCP:
         if name == "get_news_list":
             return {"ok": True, "news": []}
         if name == "get_trading_history_orders":
+            if self.closed_trades_override is not None:
+                return {
+                    "orders": [],
+                    "deals": [dict(t) for t in self.closed_trades_override],
+                    "positions": [],
+                }
             return {"orders": [], "deals": [], "positions": []}
         if name == "terminal_get_info":
             return {"ok": True, "terminal": {"connection": {"state": "synchronized"}}}
