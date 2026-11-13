@@ -13,6 +13,7 @@ from backend.ignite.api.deps import get_rt
 from backend.ignite.api.errors import ApiError
 from backend.ignite.forecasting.client import ForecastError
 from backend.ignite.services.broker import BrokerError
+from backend.ignite.services.readiness import ReadinessService
 from backend.ignite.services.runtime import Runtime
 
 router = APIRouter(prefix="/api", tags=["system"])
@@ -77,6 +78,18 @@ def health(rt: Runtime = Depends(get_rt)) -> dict[str, Any]:
         "kill_switch": rt.kill_switch(),
         "llm": rt.llm.available(),
         "knowledge": rt.knowledge_stats(),
+    }
+
+
+@router.get("/health/readiness")
+def readiness(rt: Runtime = Depends(get_rt)) -> dict[str, Any]:
+    """Live readiness check - validates all subsystems for live trading."""
+    report = ReadinessService(rt).check()
+    return {
+        "ready": report.ready,
+        "summary": report.summary,
+        "timestamp": report.timestamp,
+        "checks": {name: {"ok": c.ok, "detail": c.detail} for name, c in report.checks.items()},
     }
 
 

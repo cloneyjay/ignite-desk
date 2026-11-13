@@ -163,7 +163,7 @@ class FakeMCP:
                 }
             return {"orders": [], "deals": [], "positions": []}
         if name == "terminal_get_info":
-            return {"ok": True, "terminal": {"connection": {"state": "synchronized"}}}
+            return {"ok": True, "terminal": {"connection": {"state": "synchronized"}, "trade_allowed": True}}
         if name == "trade_modify_sl_tp":
             if not self.drop_sl_tp:
                 for position in self.positions:
@@ -188,8 +188,11 @@ class FakeMCP:
 class FakeForecast:
     def __init__(self) -> None:
         self.calls = 0
+        self.health_override: dict[str, Any] | None = None
 
     def health(self) -> dict[str, Any]:
+        if self.health_override is not None:
+            return self.health_override
         return {"ready": True, "model": "fake-kronos", "load_s": 0.1, "threads": 2}
 
     def close(self) -> None:
