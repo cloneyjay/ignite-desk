@@ -73,8 +73,8 @@ export default function AgentWorkbench() {
   const messages = useAgentMessages(activeId);
   const enabled = status.data?.enabled ?? false;
   const connected = health.data?.terminal.connected ?? false;
-  const account = overview.data?.account?.account;
-  const risk = overview.data?.account?.risk;
+  const account = overview.data?.account;
+  const risk = overview.data?.risk;
 
   useEffect(() => {
     if (!initialized.current && sessions.isSuccess) {
@@ -163,10 +163,10 @@ export default function AgentWorkbench() {
 
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-5">
           {messages.isLoading ? <p className="text-[12px] text-fog">Loading conversation…</p> : null}
-          {!messages.isLoading && !messages.data?.messages.length ? (
+          {!messages.isLoading && messages.data.length === 0 ? (
             <Welcome onPrompt={submit} />
           ) : null}
-          {messages.data?.messages.map((message) => (
+          {messages.data.map((message: AgentMessage) => (
             <MessageBubble key={message.id} message={message} />
           ))}
           {chat.isPending ? (
@@ -374,8 +374,8 @@ function ContextRail({
   connected: boolean;
   status: ReturnType<typeof useAgentStatus>["data"];
   health: ReturnType<typeof useHealth>["data"];
-  account: { equity: number; profit: number; server: string } | undefined;
-  risk: { open_risk_usd: number; open_risk_pct: number | null; cap_pct: number } | undefined;
+  account: { equity: number; profit: number; server: string; currency: string; margin_free: number; mode: "demo" | "live" } | undefined | null;
+  risk: { open_risk_usd: number; open_risk_pct: number; cap_pct: number; daily_pnl: number; daily_loss_limit_pct: number } | undefined | null;
   onToggle: () => void;
   toggling: boolean;
   latestDecision: string | null;

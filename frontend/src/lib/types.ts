@@ -435,13 +435,66 @@ export interface IgniteEvent {
 
 export interface AgentStatus {
   enabled: boolean;
+  operating_mode: string;
+  execution_mode: string;
   last_cycle: string | null;
+  last_guard: string | null;
+  worker_started: string | null;
+  worker_heartbeat: string | null;
   next_cycle: string | null;
   decisions_today: number;
   executed_today: number;
   positions_open: number;
   daily_pnl: number;
   daily_loss_limit: number;
+}
+
+export interface AgentRisk {
+  open_risk_usd: number;
+  open_risk_pct: number;
+  cap_pct: number;
+  daily_pnl: number;
+  daily_loss_limit_pct: number;
+}
+
+export interface AgentAccount {
+  equity: number;
+  profit: number;
+  server: string;
+  currency: string;
+  margin_free: number;
+  mode: "demo" | "live";
+}
+
+export interface AgentOverview {
+  status: AgentStatus;
+  account: AgentAccount | null;
+  account_error: string | null;
+  risk: AgentRisk;
+  positions: AgentPosition[];
+  decisions: Array<{
+    id: string;
+    created_at: string;
+    symbol: string;
+    timeframe: string;
+    signal_side: string;
+    p_up: number | null;
+    edge_atr: number | null;
+    decision: string;
+    confidence: number | null;
+    reasoning: string | null;
+    executed: boolean;
+    execution_error: string | null;
+    draft_id: string | null;
+  }>;
+  drafts: Array<Record<string, unknown>>;
+  last_run: AgentRunSummary | null;
+  guardrails: {
+    kill_switch: boolean;
+    risk: Record<string, number>;
+    autonomous_enabled: boolean;
+  };
+  generated_at: string;
 }
 
 export interface AgentToggleRequest { enabled: boolean; }
@@ -460,6 +513,7 @@ export interface AgentPosition {
   unrealised_pnl: number;
   max_favourable_atr: number | null;
   max_adverse_atr: number | null;
+  status: "pending" | "open" | "protected" | "trailing" | "partial" | "closing" | "closed" | "orphaned" | "unprotected";
 }
 
 export interface ChatMessage {
@@ -487,6 +541,36 @@ export interface AgentConfig {
 
 export interface AgentChatRequest {
   text: string;
+  session_id?: string | null;
+}
+
+export interface AgentSession {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  archived: boolean;
+}
+
+export interface AgentMessage {
+  id: string;
+  session_id: string;
+  created_at: string;
+  role: "user" | "agent" | "tool" | "system";
+  content: string;
+  status: string;
+  tool_name: string | null;
+  tool_args: Record<string, unknown> | null;
+  tool_result: Record<string, unknown> | null;
+  latency_ms: number | null;
+  links: Record<string, string> | null;
+}
+
+export interface AgentToolCall {
+  name: string;
+  status: string;
+  latency_ms: number | null;
+  result_preview: string | null;
 }
 
 export interface AgentChatResponse {
@@ -519,4 +603,26 @@ export interface AgentChatResponse {
     };
     error: string | null;
   };
+  session_id: string;
+  tool_calls: AgentToolCall[];
+}
+
+export interface AgentRunSummary {
+  id: string;
+  created_at: string;
+  skill: string;
+  subject: string | null;
+  provider: string | null;
+  model: string | null;
+  status: string;
+  fallback: boolean;
+  latency_ms: number | null;
+  cards: string[];
+  checks: {
+    ok?: boolean;
+    numbers_checked?: number;
+    violations?: unknown[];
+  };
+  narrative: string | null;
+  error: string | null;
 }
