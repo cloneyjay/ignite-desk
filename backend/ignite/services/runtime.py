@@ -33,6 +33,7 @@ from backend.ignite.market.time import Clock
 from backend.ignite.mcp.client import MCPClient, MCPError
 from backend.ignite.services.broker import BrokerError
 from backend.ignite.services.config_service import ConfigService
+from backend.ignite.agent.tools import ToolRegistry
 from backend.ignite.services.events import EventBus
 from backend.ignite.services.gateway import AgentExecutionGateway
 from backend.ignite.services.ledger import Ledger
@@ -129,6 +130,7 @@ class Runtime:
         self.config_service = ConfigService(self.store, self._seed_config, self.events)
         self.ledger = Ledger(self)
         self.gateway = AgentExecutionGateway(self)
+        self.tool_registry = ToolRegistry()
 
         # Scheduler (single trading process)
         self.scheduler = BackgroundScheduler(timezone=timezone.utc)
@@ -255,6 +257,68 @@ class Runtime:
                 self.store.expire_stale_drafts(self.settings.draft_ttl_s)
         except Exception as exc:  # noqa: BLE001
             logging.getLogger("ignite.runtime").exception("Draft expiry failed: %s", exc)
+
+    # ------------------------------------------------------------------- mode promotion
+
+    def promote_mode(self, target: str, confirm: bool, account_number: str | None = None) -> dict[str, Any]:
+        """Promote execution mode to next level (shadow→demo→live)."""
+        if not confirm:
+            return {"ok": False, "error": "confirmation required"}
+
+        config = self.config()
+        current = config.execution_mode
+
+        # Validate operating mode
+        if config.operating_mode != "autonomous":
+            return {"ok": False, "error": "autonomous operating mode required"}
+
+        # Validate promotion path
+        if current == "shadow" and target == "demo":
+            pass
+        elif current == "demo" and target == "live":
+            if not account_number:
+                return {"ok": False, "error": "account_number required for live promotion"}
+        else:
+            return {"ok": False, "error": f"invalid promotion from {current} to {target}"}
+
+        # Update config
+        new_config = self.config_service.update({"execution_mode": target})
+
+        # Audit log
+        self.store.audit(
+            "api",
+            "mode_promoted",
+            {"from": current, "to": target, "account": account_number, "operator": "api"},
+            "ok",
+        )
+        self.events.publish("mode.promoted", {"from": current, "to": target, "account": account_number})
+
+        return {"ok": True, "mode": target}
+
+    def demote_mode(self, confirm: bool) -> dict[str, Any]:
+        """Demote execution mode to shadow."""
+        if not confirm:
+            return {"ok": False, "error": "confirmation required"}
+
+        config = self.config()
+        current = config.execution_mode
+
+        if current == "shadow":
+            return {"ok": False, "error": "already in shadow mode"}
+
+        # Update config
+        new_config = self.config_service.update({"execution_mode": "shadow"})
+
+        # Audit log
+        self.store.audit(
+            "api",
+            "mode_demoted",
+            {"from": current, "to": "shadow", "operator": "api"},
+            "ok",
+        )
+        self.events.publish("mode.demoted", {"from": current, "to": "shadow"})
+
+        return {"ok": True, "mode": "shadow"}
 
     def seed_symbols(self) -> None:
         if self.store.list_symbols():

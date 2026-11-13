@@ -513,6 +513,24 @@ class Store:
         )
         self._conn.commit()
 
+    def get_audit_log(self, limit: int = 100) -> list[dict[str, Any]]:
+        """Retrieve recent audit log entries."""
+        rows = self._conn.execute(
+            "SELECT * FROM audit_log ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        results = []
+        for row in rows:
+            item = dict(row)
+            # Parse payload JSON if present
+            if item.get("payload"):
+                try:
+                    item["payload"] = json.loads(item["payload"])
+                except (json.JSONDecodeError, TypeError):
+                    item["payload"] = {}
+            results.append(item)
+        return results
+
     # ---------------------------------------------------------------- knowledge
 
     def sync_knowledge_cards(self, cards: list[dict[str, Any]]) -> None:

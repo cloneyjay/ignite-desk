@@ -157,3 +157,35 @@ def auth_token(rt: Runtime = Depends(get_rt)) -> dict[str, Any]:
         "expires_at": expires_at,
         "expires_in": 86400,
     }
+
+
+class ModePromoteRequest(BaseModel):
+    target: str
+    confirm: bool
+    account_number: str | None = None
+
+
+class ModeDemoteRequest(BaseModel):
+    confirm: bool
+
+
+@router.post("/mode/promote")
+def promote_mode(
+    body: ModePromoteRequest, rt: Runtime = Depends(get_rt)
+) -> dict[str, Any]:
+    """Promote execution mode to next level (shadow→demo→live)."""
+    result = rt.promote_mode(body.target, body.confirm, body.account_number)
+    if not result.get("ok"):
+        raise ApiError(400, "promotion_failed", result.get("error", "unknown"))
+    return {"mode": result["mode"]}
+
+
+@router.post("/mode/demote")
+def demote_mode(
+    body: ModeDemoteRequest, rt: Runtime = Depends(get_rt)
+) -> dict[str, Any]:
+    """Demote execution mode to shadow."""
+    result = rt.demote_mode(body.confirm)
+    if not result.get("ok"):
+        raise ApiError(400, "demotion_failed", result.get("error", "unknown"))
+    return {"mode": result["mode"]}
