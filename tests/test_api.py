@@ -44,7 +44,7 @@ def test_account_and_settings(env):
     client, _ = env
     account = client.get("/api/account").json()
     assert account["account"]["equity"] == 3000.0
-    assert account["risk"]["cap_pct"] == pytest.approx(0.01)
+    assert account["risk"]["cap_pct"] == pytest.approx(0.02)
 
     settings = client.get("/api/settings").json()
     assert settings["draft_ttl_s"] == 90

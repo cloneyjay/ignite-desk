@@ -28,6 +28,7 @@ from backend.ignite.market.symbols import get_spec, quote, spread_points
 from backend.ignite.market.time import Clock
 from backend.ignite.mcp.client import MCPClient, MCPError
 from backend.ignite.services.broker import BrokerError
+from backend.ignite.services.config_service import ConfigService
 from backend.ignite.services.events import EventBus
 from backend.ignite.services.news import NewsService
 from backend.ignite.store.db import Store, utc_now
@@ -118,9 +119,18 @@ class Runtime:
             ),
         )
 
-        self.agent_config = AgentConfig.from_env()
+        self._seed_config = AgentConfig.from_env()
+        self.config_service = ConfigService(self.store, self._seed_config, self.events)
 
     # ----------------------------------------------------------------- lifecycle
+
+    @property
+    def agent_config(self) -> AgentConfig:
+        """Backwards-compatible view of the single persisted config."""
+        return self.config_service.get()
+
+    def config(self) -> AgentConfig:
+        return self.config_service.get()
 
     def shutdown(self) -> None:
         try:
@@ -304,15 +314,7 @@ class Runtime:
     # ---------------------------------------------------------------------- risk
 
     def risk_config(self) -> RiskConfig:
-        raw = self.store.setting("risk_pct", str(RiskConfig.risk_pct))
-        try:
-            risk_pct = float(raw)
-        except (TypeError, ValueError):
-            risk_pct = RiskConfig.risk_pct
-        return RiskConfig(
-            risk_pct=risk_pct,
-            max_drift_atr=self.settings.max_drift_atr,
-        )
+        return self.config().to_risk_config(max_drift_atr=self.settings.max_drift_atr)
 
     def kill_switch(self) -> bool:
         return self.store.kill_switch()

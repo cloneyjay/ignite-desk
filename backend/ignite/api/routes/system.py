@@ -111,14 +111,15 @@ def update_settings(
     body: SettingsUpdate, rt: Runtime = Depends(get_rt)
 ) -> dict[str, Any]:
     if body.risk_pct is not None:
-        if body.risk_pct > RiskConfig.max_risk_pct + 1e-12:
+        config = rt.config()
+        if body.risk_pct > config.max_risk_pct + 1e-12:
             raise ApiError(
                 400,
                 "risk_pct_above_cap",
                 f"risk_pct {body.risk_pct:.4f} exceeds the hard cap "
-                f"{RiskConfig.max_risk_pct:.4f}",
+                f"{config.max_risk_pct:.4f}",
             )
-        rt.store.set_setting("risk_pct", str(body.risk_pct))
+        rt.config_service.update({"risk_pct": body.risk_pct})
         rt.store.audit("api", "risk_pct", {"risk_pct": body.risk_pct})
     if body.kill_switch is not None:
         rt.set_kill_switch(body.kill_switch)

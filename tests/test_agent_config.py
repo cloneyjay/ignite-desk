@@ -15,7 +15,10 @@ def test_agent_config_defaults():
     assert cfg.enabled is False
     assert cfg.cycle_interval_min == 30
     assert cfg.session_open_hour == 3
-    assert cfg.daily_loss_limit_pct == 0.03
+    assert cfg.daily_loss_limit_pct == 0.06
+    assert cfg.max_concurrent_positions == 10
+    assert cfg.operating_mode == "prepare"
+    assert cfg.execution_mode == "shadow"
     assert cfg.trail_sl_atr == 1.5
     assert cfg.scale_in_atr == 1.5
     assert cfg.scale_out_levels == (1.0, 2.0, 3.0)
@@ -62,4 +65,7 @@ def test_agent_config_from_env_partial(monkeypatch):
     assert cfg.enabled is True
     assert cfg.cycle_interval_min == 30
     assert cfg.session_open_hour == 3
-    assert cfg.daily_loss_limit_pct == 0.03
+    assert cfg.daily_loss_limit_pct == 0.06
+    assert cfg.max_concurrent_positions == 10
+    assert cfg.operating_mode == "prepare"
+    assert cfg.execution_mode == "shadow"
