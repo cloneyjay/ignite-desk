@@ -125,3 +125,22 @@ def update_settings(
         rt.set_kill_switch(body.kill_switch)
         rt.store.audit("api", "kill_switch", {"enabled": body.kill_switch})
     return get_settings(rt)
+
+
+@router.post("/auth/token")
+def auth_token(rt: Runtime = Depends(get_rt)) -> dict[str, Any]:
+    """Generate or return a session token for authenticated API access."""
+    import secrets
+    import time
+    
+    # Generate a new token
+    token = secrets.token_urlsafe(32)
+    expires_at = int(time.time() + 24 * 60 * 60)  # 24 hours
+    
+    # Store token in runtime (in production, use Redis or DB)
+    # For now, we just return it - the frontend stores it in sessionStorage
+    return {
+        "token": token,
+        "expires_at": expires_at,
+        "expires_in": 86400,
+    }
