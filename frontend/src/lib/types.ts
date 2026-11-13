@@ -571,6 +571,7 @@ export interface AgentToolCall {
   status: string;
   latency_ms: number | null;
   result_preview: string | null;
+  arguments: Record<string, unknown> | null;
 }
 
 export interface AgentChatResponse {

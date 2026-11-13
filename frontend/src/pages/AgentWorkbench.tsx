@@ -11,11 +11,13 @@ import {
 import { useHealth } from "../hooks/useApi";
 import { useEvents } from "../hooks/useEvents";
 import { api, ApiError } from "../lib/api";
-import type { AgentMessage, AgentSession } from "../lib/types";
+import type { AgentMessage, AgentSession, AgentToolCall } from "../lib/types";
 import { dateTime, money, percent, signedMoney } from "../lib/format";
 import { useToast } from "../components/Toast";
 import { Badge, Button, Panel, Row } from "../components/ui";
 import { BoltIcon, PlusIcon, WifiIcon, WifiOffIcon } from "../components/icons";
+import { ToolRow } from "../components/ToolRow";
+import { DecisionCard } from "../components/DecisionCard";
 
 const QUICK_PROMPTS = [
   "What are you watching?",
@@ -342,19 +344,37 @@ function Welcome({ onPrompt }: { onPrompt: (prompt: string) => void }) {
 
 function MessageBubble({ message }: { message: AgentMessage }) {
   if (message.role === "tool") {
-    return (
-      <div className="rounded-lg border border-line/60 bg-ink-800/50 px-3 py-2 text-[11px]">
-        <span className="mr-2 text-long">✓</span>
-        <span className="font-mono text-paper">{message.tool_name ?? "agent tool"}</span>
-        <span className="ml-2 text-fog">{message.content}</span>
-      </div>
-    );
+    const toolCall: AgentToolCall = {
+      name: message.tool_name ?? "agent tool",
+      status: message.status ?? "completed",
+      latency_ms: message.latency_ms ?? null,
+      result_preview: message.tool_result ? JSON.stringify(message.tool_result) : null,
+      arguments: message.tool_args ?? null,
+    };
+    return <ToolRow tool={toolCall} />;
   }
   const user = message.role === "user";
   return (
     <article className={`max-w-[88%] rounded-xl border px-4 py-3 ${user ? "ml-auto border-gold-500/25 bg-gold-500/[0.08]" : "border-line/70 bg-ink-850/70"}`}>
       <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-fog">{user ? "You" : "Agent"}</div>
       <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-paper/90">{message.content}</p>
+      {/* Render decision card if agent message has decision data */}
+      {!user && message.tool_result && (
+        <DecisionCard
+          decision={{
+            action: "LONG",
+            conviction: 0.8,
+            thesis: message.content,
+            evidence: [],
+            failed_conditions: [],
+            entry: { type: "market", price: 0 },
+            risk: { lots: 0, sl: 0, tp: 0 },
+            expected_rr: 0,
+            invalidate_if: [],
+            links: { analysis_id: null, draft_id: null, decision_id: "" },
+          }}
+        />
+      )}
     </article>
   );
 }
