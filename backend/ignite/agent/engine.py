@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Literal
 
 from backend.ignite.agent.config import AgentConfig
+from backend.ignite.agent.orchestrator import Orchestrator
 from backend.ignite.agent.synthesis import (
     FundamentalContext,
     TechnicalContext,
@@ -125,6 +126,76 @@ class AgentEngine:
 
     def analyse_symbol(self, symbol: str, timeframe: str) -> "SymbolDecision":
         """Run analysis and synthesis for a single symbol."""
+        # Check if we should use the new orchestrator (autonomous mode)
+        if self.rt.config().operating_mode == "autonomous":
+            return self._analyse_symbol_orchestrator(symbol, timeframe)
+
+        # Legacy path for prepare/observe modes
+        return self._analyse_symbol_legacy(symbol, timeframe)
+
+    def _analyse_symbol_orchestrator(self, symbol: str, timeframe: str) -> "SymbolDecision":
+        """Analyse using the new orchestrator with LLM tool calling."""
+        orchestrator = Orchestrator(self.rt)
+        decision = orchestrator.run_cycle(symbol, timeframe)
+
+        # Persist decision
+        self.rt.store.insert_agent_decision(
+            {
+                "id": uuid.uuid4().hex,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "analysis_id": decision.links.analysis_id,
+                "signal_side": decision.action if decision.action in ("LONG", "SHORT") else "NONE",
+                "p_up": 0.0,  # Not directly available from orchestrator
+                "edge_atr": 0.0,
+                "decision": decision.action,
+                "confidence": decision.conviction,
+                "reasoning": decision.thesis,
+                "executed": False,
+                "execution_error": None,
+                "draft_id": decision.links.draft_id,
+                "attribution_json": "{}",
+                "fundamental_json": "{}",
+                "technical_json": "{}",
+                "risk_json": json.dumps(self.rt.risk_config().__dict__),
+            }
+        )
+
+        # Execute if LONG/SHORT
+        executed = False
+        execution_error = None
+        if decision.action in ("LONG", "SHORT"):
+            from backend.ignite.services.gateway import OrderRequest
+            req = OrderRequest(
+                symbol=symbol,
+                side="buy" if decision.action == "LONG" else "sell",
+                lots=decision.risk.lots,
+                sl=decision.risk.sl,
+                tp=decision.risk.tp,
+                decision_id=decision.links.decision_id,
+            )
+            result = self.rt.gateway.place(req)
+            executed = result.ok
+            if not result.ok:
+                execution_error = f"{result.code}: {result.detail}"
+
+        return SymbolDecision(
+            symbol=symbol,
+            timeframe=timeframe,
+            action="ENTER" if decision.action in ("LONG", "SHORT") else "SKIP",
+            signal_side=decision.action if decision.action in ("LONG", "SHORT") else "NONE",
+            p_up=0.0,
+            edge_atr=0.0,
+            confidence=decision.conviction,
+            reasoning=decision.thesis,
+            draft_id=decision.links.draft_id,
+            executed=executed,
+            error=execution_error,
+        )
+
+    def _analyse_symbol_legacy(self, symbol: str, timeframe: str) -> "SymbolDecision":
+        """Run analysis and synthesis for a single symbol (legacy path)."""
         # Run analysis graph
         from backend.ignite.analysis.graph import run_analysis
         from backend.ignite.analysis.risk import RiskConfig
