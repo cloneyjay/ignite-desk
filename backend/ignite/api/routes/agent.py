@@ -913,6 +913,9 @@ def agent_status(rt: Runtime = Depends(get_rt)) -> dict[str, Any]:
     executed_today = len([d for d in decisions if d.get("executed") and d["created_at"].startswith(today)])
     positions = rt.store.agent_positions()
 
+    # Daily PnL from ledger (realised + floating)
+    daily_pnl = rt.ledger.daily().total_usd
+
     # Compute next cycle time
     from datetime import timedelta
     now = datetime.now(timezone.utc)
@@ -930,7 +933,7 @@ def agent_status(rt: Runtime = Depends(get_rt)) -> dict[str, Any]:
         "decisions_today": decisions_today,
         "executed_today": executed_today,
         "positions_open": len(positions),
-        "daily_pnl": sum(float(p.get("realised_pnl") or 0.0) for p in positions),
+        "daily_pnl": daily_pnl,
         "daily_loss_limit": config.daily_loss_limit_pct,
     }
 
@@ -943,12 +946,33 @@ def agent_overview(rt: Runtime = Depends(get_rt)) -> dict[str, Any]:
     account_error: str | None = None
     try:
         rt._ensure_mcp()
-        account = rt.account_payload()
+        account_payload = rt.account_payload()
+        account = {
+            "equity": account_payload.get("equity"),
+            "profit": account_payload.get("profit"),
+            "server": account_payload.get("server"),
+            "currency": account_payload.get("currency"),
+            "margin_free": account_payload.get("margin_free"),
+            "mode": "demo" if account_payload.get("type") == "demo" else "live",
+        }
     except BrokerError as exc:
         account_error = str(exc)
 
     decisions = rt.store.agent_decisions(limit=20)
     drafts = rt.store.pending_drafts(limit=20)
+
+    # Risk snapshot from ledger
+    ledger_daily = rt.ledger.daily()
+    open_risk = rt.ledger.open_risk_usd()
+    equity = account["equity"] if account else 0.0
+    risk = {
+        "open_risk_usd": round(open_risk, 2),
+        "open_risk_pct": round(open_risk / equity, 6) if equity > 0 else 0.0,
+        "cap_pct": rt.config().portfolio_risk_cap_pct,
+        "daily_pnl": ledger_daily.total_usd,
+        "daily_loss_limit_pct": rt.config().daily_loss_limit_pct,
+    }
+
     return {
         "status": status,
         "account": account,
@@ -956,6 +980,7 @@ def agent_overview(rt: Runtime = Depends(get_rt)) -> dict[str, Any]:
         "positions": rt.store.agent_positions(),
         "decisions": decisions,
         "drafts": drafts,
+        "risk": risk,
         "last_run": (rt.store.recent_agent_runs(1) or [None])[0],
         "guardrails": {
             "kill_switch": rt.kill_switch(),
