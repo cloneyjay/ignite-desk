@@ -84,3 +84,80 @@ def test_agent_config_endpoint(env):
     data = resp.json()
     assert "cycle_interval_min" in data
     assert "daily_loss_limit_pct" in data
+
+
+class _StubLLM:
+    """Deterministic stand-in so conversation tests never touch the network."""
+
+    def complete(self, messages, **kwargs):
+        from backend.ignite.llm.client import LLMResult
+
+        return LLMResult(
+            text="Not without a setup. Nothing was sent.",
+            provider="stub",
+            model="stub",
+            latency_ms=1,
+        )
+
+
+def _live_position(ticket: str = "900001") -> dict:
+    return {
+        "position_id": ticket,
+        "symbol": "XAUUSD",
+        "action": "buy",
+        "volume": 0.01,
+        "price_open": 3930.0,
+        "price_last": 3930.0,
+        "sl": 3920.0,
+        "tp": 3950.0,
+        "comment": "ignite agent",
+        "create_time": "2026-01-01T00:00:00",
+        "update_time": "2026-01-01T00:00:00",
+    }
+
+
+def test_manual_close_uses_symbol_and_ticket(client, rt):
+    rt.mcp.positions.append(_live_position())
+    # Also add to agent_positions table so the endpoint finds it
+    rt.store.upsert_agent_position(
+        {
+            "ticket": "900001",
+            "symbol": "XAUUSD",
+            "side": "BUY",
+            "entry_price": 3930.0,
+            "volume": 0.01,
+            "sl": 3920.0,
+            "tp": 3950.0,
+            "opened_at": "2026-01-01T00:00:00Z",
+            "managed_by_agent": 1,
+            "trail_sl": 3920.0,
+            "scale_in_count": 0,
+            "scale_out_count": 0,
+        }
+    )
+    resp = client.post("/api/agent/positions/900001/close")
+    assert resp.status_code == 200
+    args = rt.mcp.called("trade_close_single_position")[0]
+    assert args == {"symbol": "XAUUSD", "position_ticket": "900001"}
+
+
+def test_config_put_round_trips_and_applies(client, rt):
+    resp = client.put("/api/agent/config", json={"risk_pct": 0.025})
+    assert resp.status_code == 200
+    assert resp.json()["risk_pct"] == 0.025
+    assert rt.config().risk_pct == 0.025
+
+
+def test_question_does_not_place_an_order(client, rt):
+    rt.llm = _StubLLM()
+    resp = client.post("/api/agent/chat", json={"text": "should I buy XAUUSD?"})
+    assert resp.status_code == 200
+    assert rt.mcp.called("trade_send_market_order") == []
+
+
+def test_chat_tool_trace_is_real(client, rt):
+    resp = client.post("/api/agent/chat", json={"text": "show my positions"})
+    trace = resp.json()["tool_calls"]
+    assert trace
+    for row in trace:
+        assert rt.store.agent_events(decision_id=row["decision_id"])
