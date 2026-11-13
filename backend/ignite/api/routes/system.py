@@ -48,7 +48,7 @@ def health(rt: Runtime = Depends(get_rt)) -> dict[str, Any]:
     except BrokerError:
         pass
 
-    running = [j for j in rt.jobs.values() if j.status == "running"]
+    running = [j for j in rt.jobs_snapshot() if j.status == "running"]
     return {
         "ok": mcp_ok and bool(kronos.get("ready")),
         "timezone": rt.local_zone(),

@@ -464,6 +464,15 @@ class Runtime:
             },
         )
 
+    def jobs_snapshot(self) -> list[Job]:
+        """Return a copy of all jobs for health monitoring."""
+        with self._jobs_lock:
+            return list(self.jobs.values())
+
+    def expire_drafts(self) -> int:
+        """Expire stale drafts. Called by scheduler."""
+        return self.store.expire_stale_drafts(utc_now())
+
     # --------------------------------------------------------------- confirm token
 
     def issue_token(self, draft_id: str, expires_at: str) -> str:

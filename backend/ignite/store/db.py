@@ -472,18 +472,25 @@ class Store:
         self._conn.commit()
         return message
 
-    def agent_messages(self, session_id: str, limit: int = 200) -> list[dict[str, Any]]:
-        rows = self._conn.execute(
-            """
+    def agent_messages(
+        self, session_id: str, limit: int = 200, before: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Return newest messages first. `before` is a cursor \"created_at|id\" for pagination."""
+        sql = """
             SELECT * FROM agent_messages
             WHERE session_id=?
-            ORDER BY created_at ASC
-            LIMIT ?
-            """,
-            (session_id, limit),
-        ).fetchall()
+        """
+        params = [session_id]
+        if before:
+            cursor_created, cursor_id = before.split("|", 1)
+            sql += " AND (created_at < ? OR (created_at = ? AND id < ?))"
+            params.extend([cursor_created, cursor_created, cursor_id])
+        sql += " ORDER BY created_at DESC, id DESC LIMIT ?"
+        params.append(limit)
+
+        rows = self._conn.execute(sql, params).fetchall()
         messages = []
-        for row in rows:
+        for row in reversed(rows):  # reverse to return oldest-first within the window
             item = dict(row)
             for key in ("tool_args_json", "tool_result_json", "links_json"):
                 raw = item.pop(key)
