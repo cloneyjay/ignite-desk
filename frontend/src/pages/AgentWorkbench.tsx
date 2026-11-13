@@ -11,7 +11,7 @@ import {
 import { useHealth } from "../hooks/useApi";
 import { useEvents } from "../hooks/useEvents";
 import { api, ApiError } from "../lib/api";
-import type { AgentMessage, AgentSession, AgentToolCall } from "../lib/types";
+import type { AgentMessage, AgentSession, AgentToolCall, AgentStatus } from "../lib/types";
 import { dateTime, money, percent, signedMoney } from "../lib/format";
 import { useToast } from "../components/Toast";
 import { Badge, Button, Panel, Row } from "../components/ui";
@@ -283,11 +283,43 @@ function AutonomousRail({
 }: {
   enabled: boolean;
   connected: boolean;
-  status: ReturnType<typeof useAgentStatus>["data"];
+  status: AgentStatus | undefined;
   health: ReturnType<typeof useHealth>["data"];
   onToggle: () => void;
   toggling: boolean;
 }) {
+  const { push } = useToast();
+
+  const handlePromote = async (target: "demo" | "live") => {
+    let accountNumber: string | undefined;
+    if (target === "live") {
+      const input = prompt("Enter account number for LIVE promotion:");
+      if (!input) return;
+      accountNumber = input;
+    }
+    try {
+      await api.promoteMode(target, true, accountNumber);
+      push({ tone: "ok", title: `Promoted to ${target.toUpperCase()}` });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      push({ tone: "danger", title: "Promotion failed", message });
+    }
+  };
+
+  const handleDemote = async () => {
+    try {
+      await api.demoteMode(true);
+      push({ tone: "ok", title: "Demoted to SHADOW" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      push({ tone: "danger", title: "Demotion failed", message });
+    }
+  };
+
+  const currentMode = status?.execution_mode ?? "shadow";
+  const canPromote = enabled && connected && currentMode !== "live";
+  const canDemote = currentMode !== "shadow";
+
   return (
     <aside className="space-y-4">
       <Panel title="Autonomous desk" subtitle="Aegus is the loop, not a button">
@@ -310,6 +342,55 @@ function AutonomousRail({
         <Row label="Kronos" value={health?.kronos.ready ? "forecasting ready" : "offline"} tone={health?.kronos.ready ? "long" : "short"} />
         <Row label="NVIDIA NIM" value={health?.llm.nim ? "connected" : "unavailable"} tone={health?.llm.nim ? "long" : "short"} />
         <Row label="MT5 MCP" value={connected ? "connected" : "offline"} tone={connected ? "long" : "short"} />
+      </Panel>
+      <Panel title="Execution mode" subtitle={`Current: ${currentMode.toUpperCase()}`}>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[12px] text-fog">Current mode</span>
+            <Badge tone={currentMode === "live" ? "short" : currentMode === "demo" ? "long" : "neutral"} dot>
+              {currentMode.toUpperCase()}
+            </Badge>
+          </div>
+          <div className="space-y-2">
+            {canPromote && currentMode === "shadow" && (
+              <Button
+                size="sm"
+                variant="primary"
+                className="w-full"
+                onClick={() => handlePromote("demo")}
+                disabled={status?.operating_mode !== "autonomous"}
+              >
+                Promote to DEMO
+              </Button>
+            )}
+            {canPromote && currentMode === "demo" && (
+              <Button
+                size="sm"
+                variant="primary"
+                className="w-full"
+                onClick={() => handlePromote("live")}
+                disabled={status?.operating_mode !== "autonomous"}
+              >
+                Promote to LIVE
+              </Button>
+            )}
+            {canDemote && (
+              <Button
+                size="sm"
+                variant="danger"
+                className="w-full"
+                onClick={handleDemote}
+              >
+                Demote to SHADOW
+              </Button>
+            )}
+            {!canPromote && !canDemote && (
+              <p className="text-[11px] text-fog text-center">
+                Enable autonomous mode and connect MT5 to change execution mode
+              </p>
+            )}
+          </div>
+        </div>
       </Panel>
       <Panel title="Why no trade?">
         <p className="text-[12px] leading-relaxed text-paper/75">

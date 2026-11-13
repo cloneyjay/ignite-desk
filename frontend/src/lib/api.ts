@@ -233,4 +233,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ text, session_id: sessionId ?? null }),
     }),
+
+  promoteMode: (target: "demo" | "live", confirm: boolean, accountNumber?: string) =>
+    request<{ mode: string }>("/mode/promote", {
+      method: "POST",
+      body: JSON.stringify({ target, confirm, account_number: accountNumber }),
+    }),
+
+  demoteMode: (confirm: boolean) =>
+    request<{ mode: string }>("/mode/demote", {
+      method: "POST",
+      body: JSON.stringify({ confirm }),
+    }),
 };
