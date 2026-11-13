@@ -4,7 +4,11 @@ import type {
   AccountPayload,
   AgentChatResponse,
   AgentConfig,
+  AgentOverview,
+  AgentMessage,
+  AgentSession,
   AgentPosition,
+  AgentRunSummary,
   AgentStatus,
   Analysis,
   BarsPayload,
@@ -174,21 +178,34 @@ export const api = {
   newsItem: (id: string) => request<NewsDetail>(`/news/${encodeURIComponent(id)}`),
 
   agentStatus: () => request<AgentStatus>("/agent/status"),
+  agentOverview: () => request<AgentOverview>("/agent/overview"),
+  agentSessions: () => request<{ sessions: AgentSession[]; count: number }>("/agent/sessions"),
+  createAgentSession: (title = "New agent conversation") =>
+    request<{ session: AgentSession }>("/agent/sessions", {
+      method: "POST",
+      body: JSON.stringify({ title }),
+    }),
+  agentMessages: (sessionId: string, before?: string) =>
+    request<{ messages: AgentMessage[]; count: number; hasMore: boolean; cursor: string | null }>(
+      `/agent/sessions/${encodeURIComponent(sessionId)}/messages${query({ before })}`
+    ),
   agentToggle: (body: { enabled: boolean }) =>
     request<{ enabled: boolean }>("/agent/toggle", {
       method: "POST",
       body: JSON.stringify(body),
     }),
   agentPositions: () => request<{ positions: AgentPosition[] }>("/agent/positions"),
+  agentRuns: (limit = 20) =>
+    request<{ runs: AgentRunSummary[]; count: number }>(`/agent/runs${query({ limit })}`),
   agentConfig: () => request<AgentConfig>("/agent/config"),
   agentConfigUpdate: (config: Partial<AgentConfig>) =>
     request<AgentConfig>("/agent/config", {
       method: "PUT",
       body: JSON.stringify(config),
     }),
-  agentChat: (text: string) =>
+  agentChat: (text: string, sessionId?: string | null) =>
     request<AgentChatResponse>(`/agent/chat`, {
       method: "POST",
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, session_id: sessionId ?? null }),
     }),
 };

@@ -199,12 +199,25 @@ def create_agent_session(
 
 @router.get("/agent/sessions/{session_id}/messages")
 def agent_session_messages(
-    session_id: str, rt: Runtime = Depends(get_rt)
+    session_id: str,
+    before: str | None = None,
+    limit: int = 200,
+    rt: Runtime = Depends(get_rt)
 ) -> dict[str, Any]:
     if rt.store.agent_session(session_id) is None:
         raise ApiError(404, "session_not_found", f"no agent session {session_id}")
-    messages = rt.store.agent_messages(session_id)
-    return {"messages": messages, "count": len(messages)}
+    messages = rt.store.agent_messages(session_id, limit=limit, before=before)
+    has_more = len(messages) == limit
+    cursor = None
+    if has_more and messages:
+        last_msg = messages[-1]
+        cursor = f"{last_msg['created_at']}|{last_msg['id']}"
+    return {
+        "messages": messages,
+        "count": len(messages),
+        "hasMore": has_more,
+        "cursor": cursor,
+    }
 
 
 class ChatRequest(BaseModel):
