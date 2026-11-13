@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from backend.ignite.services import broker
@@ -331,7 +332,145 @@ class AgentExecutionGateway:
                 return OrderResult(False, "BROKER", str(exc))
         return OrderResult(True, "OK", "modify sent", position_ticket=str(ticket))
 
-    # ------------------------------------------------------------------ helpers
+    def scale(
+        self, ticket: str, side: str, volume: float, sl: float | None, tp: float | None
+    ) -> OrderResult:
+        """Scale position in/out. For reduce: close and reopen remainder (MT5 limitation)."""
+        rt = self._rt
+        try:
+            position = next(
+                (p for p in rt.positions() if str(p["ticket"]) == str(ticket)), None
+            )
+        except BrokerError as exc:
+            return OrderResult(False, "BROKER", str(exc))
+        if position is None:
+            return OrderResult(False, "UNRESOLVED", f"no open position {ticket}")
+
+        agent_pos = rt.store.agent_position(ticket)
+        if not agent_pos:
+            return OrderResult(False, "UNRESOLVED", f"no agent position {ticket}")
+
+        if side == "reduce":
+            # Validate volume
+            current_volume = float(position.get("lots") or position.get("volume") or 0.0)
+            if volume <= 0 or volume > current_volume:
+                return OrderResult(False, "VOLUME", f"reduce volume {volume} exceeds current {current_volume}")
+            if volume < rt.spec(position["symbol"]).volume_step - 1e-12:
+                return OrderResult(False, "LOTS", f"volume {volume} below step")
+
+            # MT5 doesn't support partial close directly - close full and reopen remainder
+            remainder = round(current_volume - volume, 2)
+            if remainder < rt.spec(position["symbol"]).volume_min - 1e-12:
+                return OrderResult(False, "VOLUME", f"remainder {remainder} below minimum")
+
+            symbol = position["symbol"]
+            current_sl = sl if sl is not None else position.get("sl")
+            current_tp = tp if tp is not None else position.get("tp")
+            entry_price = position.get("price_open")
+            position_side = position["side"]
+
+            # Close full position on broker
+            with rt.execution_lock:
+                try:
+                    broker.close_position(rt.mcp, symbol, str(ticket))
+                except BrokerError as exc:
+                    return OrderResult(False, "BROKER", str(exc))
+
+            # Mark old position as closed in agent store
+            rt.store.close_agent_position(ticket, "SCALE_OUT", 0.0, 0.0)
+
+            # Reopen remainder if > 0
+            if remainder > 0:
+                try:
+                    sent = broker.send_market_order(
+                        rt.mcp, symbol, position_side, remainder, current_sl, current_tp, "ignite agent scale"
+                    )
+                except BrokerError as exc:
+                    return OrderResult(False, "BROKER", str(exc))
+                
+                order_id, new_ticket = broker.extract_order_ticket(sent)
+                new_ticket = new_ticket or order_id
+                if not new_ticket:
+                    return OrderResult(False, "UNRESOLVED", "remainder reopen failed")
+
+                # Create new agent position for remainder
+                rt.store.upsert_agent_position({
+                    "ticket": new_ticket,
+                    "symbol": symbol,
+                    "side": position_side.upper(),
+                    "entry_price": entry_price,
+                    "volume": remainder,
+                    "sl": current_sl,
+                    "tp": current_tp,
+                    "opened_at": datetime.now(timezone.utc).isoformat(),
+                    "managed_by_agent": 1,
+                    "trail_sl": current_sl,
+                    "scale_in_count": agent_pos.get("scale_in_count", 0),
+                    "scale_out_count": agent_pos.get("scale_out_count", 0) + 1,
+                    "max_favourable_atr": agent_pos.get("max_favourable_atr", 0.0),
+                    "max_adverse_atr": agent_pos.get("max_adverse_atr", 0.0),
+                    "last_managed_at": datetime.now(timezone.utc).isoformat(),
+                    "status": "partial",
+                })
+
+            rt.store.append_agent_event(
+                "position.scaled",
+                symbol=symbol,
+                payload={"ticket": ticket, "side": "reduce", "volume": volume, "remainder": remainder},
+            )
+            return OrderResult(True, "OK", f"reduced by {volume}", position_ticket=new_ticket if remainder > 0 else ticket)
+
+        elif side == "add":
+            # Scale in - add to position (new order)
+            if volume <= 0:
+                return OrderResult(False, "VOLUME", "add volume must be positive")
+            
+            symbol = position["symbol"]
+            position_side = position["side"]
+            current_sl = sl if sl is not None else position.get("sl")
+            current_tp = tp if tp is not None else position.get("tp")
+
+            with rt.execution_lock:
+                try:
+                    sent = broker.send_market_order(
+                        rt.mcp, symbol, position_side, volume, current_sl, current_tp, "ignite agent scale in"
+                    )
+                except BrokerError as exc:
+                    return OrderResult(False, "BROKER", str(exc))
+
+            order_id, new_ticket = broker.extract_order_ticket(sent)
+            new_ticket = new_ticket or order_id
+            if not new_ticket:
+                return OrderResult(False, "UNRESOLVED", "scale in order failed")
+
+            rt.store.upsert_agent_position({
+                "ticket": new_ticket,
+                "symbol": symbol,
+                "side": position["side"].upper(),
+                "entry_price": position.get("price_open"),
+                "volume": volume,
+                "sl": current_sl,
+                "tp": current_tp,
+                "opened_at": datetime.now(timezone.utc).isoformat(),
+                "managed_by_agent": 1,
+                "trail_sl": current_sl,
+                "scale_in_count": agent_pos.get("scale_in_count", 0) + 1,
+                "scale_out_count": agent_pos.get("scale_out_count", 0),
+                "max_favourable_atr": agent_pos.get("max_favourable_atr", 0.0),
+                "max_adverse_atr": agent_pos.get("max_adverse_atr", 0.0),
+                "last_managed_at": datetime.now(timezone.utc).isoformat(),
+                "status": "open",
+            })
+
+            rt.store.append_agent_event(
+                "position.scaled",
+                symbol=symbol,
+                payload={"ticket": ticket, "side": "add", "volume": volume, "new_ticket": new_ticket},
+            )
+            return OrderResult(True, "OK", f"added {volume}", position_ticket=new_ticket)
+
+        else:
+            return OrderResult(False, "INVALID", f"unknown scale side: {side}")
 
     def _reject(self, req: OrderRequest, code: str, detail: str) -> OrderResult:
         self._event("order.rejected", req, {"code": code, "detail": detail})
