@@ -138,12 +138,64 @@ class PositionManager:
             actions.append(PositionAction(type="CLOSE", ticket=pos.ticket, reason=exit_reason))
             return actions
 
-        # 2. Trail SL
+        # 2. Track MFE/MAE (maximum favorable/adverse excursion in ATR)
+        self._update_excursion(pos)
+
+        # 3. Trail SL
         new_sl = self.trail_sl(pos)
         if new_sl is not None:
             actions.append(PositionAction(type="TRAIL_SL", ticket=pos.ticket, new_sl=new_sl))
 
         return actions
+
+    def _update_excursion(self, pos: AgentPosition) -> None:
+        """Update maximum favorable/adverse excursion in ATR terms."""
+        atr = self._get_atr(pos.symbol)
+        if atr is None or atr == 0:
+            return
+        
+        current_price = self._get_current_price(pos.symbol)
+        if current_price is None:
+            return
+        
+        if pos.side.upper() == "BUY":
+            move = current_price - pos.entry_price
+        else:
+            move = pos.entry_price - current_price
+        
+        move_atr = move / atr
+        
+        # Update max favourable/adverse
+        max_fav = max(0.0, move_atr)
+        max_adv = max(0.0, -move_atr)
+        
+        # Get current values from store
+        stored = self.rt.store.agent_position(pos.ticket)
+        if stored:
+            current_fav = float(stored.get("max_favourable_atr") or 0.0)
+            current_adv = float(stored.get("max_adverse_atr") or 0.0)
+            
+            new_fav = max(current_fav, max_fav)
+            new_adv = max(current_adv, max_adv)
+            
+            if new_fav > current_fav or new_adv > current_adv:
+                self.rt.store.upsert_agent_position({
+                    "ticket": pos.ticket,
+                    "symbol": pos.symbol,
+                    "side": pos.side,
+                    "entry_price": pos.entry_price,
+                    "volume": pos.volume,
+                    "sl": pos.sl,
+                    "tp": pos.tp,
+                    "opened_at": pos.opened_at,
+                    "managed_by_agent": pos.managed_by_agent,
+                    "trail_sl": pos.trail_sl,
+                    "scale_in_count": pos.scale_in_count,
+                    "scale_out_count": pos.scale_out_count,
+                    "max_favourable_atr": new_fav,
+                    "max_adverse_atr": new_adv,
+                    "last_managed_at": datetime.now(timezone.utc).isoformat(),
+                })
 
     def trail_sl(self, pos: AgentPosition, atr: float | None = None) -> float | None:
         """Calculate new trailing SL."""
