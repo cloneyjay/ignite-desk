@@ -7,6 +7,7 @@ touch the event loop directly (the bus handles the hop).
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 import uuid
@@ -15,6 +16,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from backend.ignite.agent.config import AgentConfig
 from backend.ignite.analysis.features import Features
@@ -126,6 +130,12 @@ class Runtime:
         self.ledger = Ledger(self)
         self.gateway = AgentExecutionGateway(self)
 
+        # Scheduler (single trading process)
+        self.scheduler = BackgroundScheduler(timezone=timezone.utc)
+        self._shutdown = threading.Event()
+        self._cycle_lock = threading.Lock()
+        self._cycle_running = False
+
     # ----------------------------------------------------------------- lifecycle
 
     @property
@@ -136,7 +146,61 @@ class Runtime:
     def config(self) -> AgentConfig:
         return self.config_service.get()
 
+    def start(self) -> None:
+        """Start the trading scheduler (cycle + supervision + expiry)."""
+        if self.scheduler.running:
+            return
+        config = self.config()
+        self.store.set_setting("agent_worker_started", utc_now())
+
+        # Cycle job: session open + interval
+        self.scheduler.add_job(
+            self._run_cycle_job,
+            CronTrigger(hour=config.session_open_hour, minute=0, timezone="UTC"),
+            id="session_open",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=300,
+        )
+        self.scheduler.add_job(
+            self._run_cycle_job,
+            IntervalTrigger(minutes=config.cycle_interval_min, timezone="UTC"),
+            id="interval",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=300,
+        )
+
+        # Position supervision job
+        self.scheduler.add_job(
+            self._manage_positions_job,
+            IntervalTrigger(seconds=config.position_check_interval_sec, timezone="UTC"),
+            id="position_manager",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=60,
+        )
+
+        # Draft expiry job (every 60s)
+        self.scheduler.add_job(
+            self._expire_stale_drafts,
+            IntervalTrigger(seconds=60, timezone="UTC"),
+            id="expire_drafts",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=120,
+        )
+
+        self.scheduler.start()
+
+    def stop(self) -> None:
+        """Stop the trading scheduler gracefully."""
+        self._shutdown.set()
+        if self.scheduler.running:
+            self.scheduler.shutdown(wait=False)
+
     def shutdown(self) -> None:
+        self.stop()
         try:
             self.mcp.close()
         finally:
@@ -149,6 +213,48 @@ class Runtime:
                         close()
                 finally:
                     self.store.close()
+
+    def _run_cycle_job(self) -> None:
+        """Wrapper for cycle execution with single-flight lock."""
+        self.store.set_setting("agent_worker_heartbeat", utc_now())
+        if not self._cycle_lock.acquire(blocking=False):
+            return
+        try:
+            self._cycle_running = True
+            if not self._shutdown.is_set():
+                from backend.ignite.agent.engine import AgentEngine
+
+                engine = AgentEngine(self, self.config())
+                engine.run_cycle()
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger("ignite.runtime").exception("Cycle failed: %s", exc)
+        finally:
+            self._cycle_running = False
+            self._cycle_lock.release()
+
+    def _manage_positions_job(self) -> None:
+        """Wrapper for position management with lock."""
+        self.store.set_setting("agent_worker_heartbeat", utc_now())
+        if not self._cycle_lock.acquire(blocking=False):
+            return
+        try:
+            if not self._shutdown.is_set():
+                from backend.ignite.agent.position_manager import PositionManager
+
+                mgr = PositionManager(self, self.config())
+                mgr.manage_all()
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger("ignite.runtime").exception("Position management failed: %s", exc)
+        finally:
+            self._cycle_lock.release()
+
+    def _expire_stale_drafts(self) -> None:
+        """Expire drafts older than the configured TTL."""
+        try:
+            if not self._shutdown.is_set():
+                self.store.expire_stale_drafts(self.settings.draft_ttl_s)
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger("ignite.runtime").exception("Draft expiry failed: %s", exc)
 
     def seed_symbols(self) -> None:
         if self.store.list_symbols():

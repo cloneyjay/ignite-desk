@@ -50,13 +50,13 @@ def create_app(
     async def lifespan(app: FastAPI):
         rt = runtime or Runtime(settings or load_settings())
         rt.events.bind(asyncio.get_running_loop())
+        rt.start()
         app.state.runtime = rt
-        threading.Thread(target=rt.seed_symbols, daemon=True).start()
         log.info("ignite api ready (db=%s)", rt.settings.db_path)
         try:
             yield
         finally:
-            rt.shutdown()
+            rt.stop()
 
     app = FastAPI(
         title="Ignite Desk API",
