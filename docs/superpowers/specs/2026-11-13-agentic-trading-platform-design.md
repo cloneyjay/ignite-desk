@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Implemented: slice 1 (foundation), slice 2 (agent loop), slice 3 (execution & supervision), slice 4 (workbench) |
+| **Status** | Implemented: slice 1 (foundation), slice 2 (agent loop), slice 3 (execution & supervision), slice 4 (workbench), slice 5 (verification & rollout) |
 | **Date** | 2026-11-13 |
 | **Scope** | Local, single-operator, autonomous trading platform |
 | **Supersedes** | `2026-11-13-agent-workbench-spec.md` §2 and §10 (LLM execution authority) |
