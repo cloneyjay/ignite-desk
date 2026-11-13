@@ -37,7 +37,7 @@ def runtime(tmp_path):
 
     rt.realised_today = realised_today  # type: ignore[method-assign]
     rt.seed_symbols()
-    rt.config_service.update({"operating_mode": "autonomous"})
+    rt.config_service.update({"operating_mode": "autonomous", "execution_mode": "live"})
     yield rt
 
 

@@ -792,7 +792,7 @@ class Store:
                 p_up, edge_atr, decision, confidence, reasoning, executed,
                 execution_error, draft_id, attribution_json, fundamental_json,
                 technical_json, risk_json
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 decision["id"],

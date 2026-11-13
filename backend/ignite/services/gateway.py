@@ -53,6 +53,8 @@ class AgentExecutionGateway:
             return self._reject(
                 req, "MODE", f"operating mode is {config.operating_mode}"
             )
+        if config.execution_mode == "shadow":
+            return self._reject(req, "SHADOW_MODE", "execution mode is shadow; order not sent")
 
         watched = {row["symbol"] for row in rt.store.list_symbols()}
         if req.symbol not in watched:
