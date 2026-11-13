@@ -37,6 +37,7 @@ export default function AgentWorkbench() {
   const createSession = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [chatError, setChatError] = useState<string | null>(null);
   const initialized = useRef(false);
 
   // SSE real-time events
@@ -103,16 +104,31 @@ export default function AgentWorkbench() {
     }
   };
 
+  const retry = () => {
+    if (!draft.trim() || chat.isPending || !activeId) return;
+    setChatError(null);
+    chat.mutate(
+      { text: draft, sessionId: activeId },
+      {
+        onError: (error) => {
+          const message = error instanceof ApiError ? error.message : String(error);
+          setChatError(message);
+        },
+      },
+    );
+  };
+
   const submit = (text: string) => {
     const value = text.trim();
     if (!value || chat.isPending || !activeId) return;
     setDraft("");
+    setChatError(null);
     chat.mutate(
       { text: value, sessionId: activeId },
       {
         onError: (error) => {
           const message = error instanceof ApiError ? error.message : String(error);
-          push({ tone: "danger", title: "Agent request failed", message });
+          setChatError(message);
         },
       },
     );
@@ -192,33 +208,54 @@ export default function AgentWorkbench() {
               </button>
             ))}
           </div>
-          <form
-            className="flex items-end gap-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              submit(draft);
-            }}
-          >
-            <textarea
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  submit(draft);
-                }
+            {chatError && (
+              <div className="w-full flex items-center gap-2 text-[11px] text-short bg-short/10 border border-short/20 rounded px-2 py-1.5">
+                <span className="flex-1">{chatError}</span>
+                <Button size="sm" variant="secondary" onClick={retry} disabled={chat.isPending || !activeId}>
+                  Retry
+                </Button>
+              </div>
+            )}
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {QUICK_PROMPTS.map((prompt) => (
+                <button
+                  key={prompt}
+                  type="button"
+                  onClick={() => submit(prompt)}
+                  disabled={chat.isPending || !activeId}
+                  className="rounded border border-line/60 bg-ink-800/60 px-2 py-1 text-[10.5px] text-fog hover:border-gold-500/50 hover:text-paper disabled:opacity-50"
+                >
+                  {prompt}
+                </button>
+              ))}
+            </div>
+            <form
+              className="flex flex-col items-end gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                submit(draft);
               }}
-              rows={2}
-              disabled={chat.isPending || !activeId}
-              placeholder="Talk to Aegus naturally — ask anything about your desk, trading, or the market…"
-              className="field min-h-[52px] flex-1 resize-none"
-            />
-            <Button type="submit" variant="primary" loading={chat.isPending} disabled={!draft.trim() || !activeId}>
-              <BoltIcon className="h-3.5 w-3.5" />
-              Send
-            </Button>
-          </form>
-        </div>
+            >
+              <textarea
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    submit(draft);
+                  }
+                }}
+                rows={2}
+                disabled={chat.isPending || !activeId}
+                placeholder="Talk to Aegus naturally — ask anything about your desk, trading, or the market…"
+                className="field min-h-[52px] flex-1 resize-none"
+              />
+              <Button type="submit" variant="primary" loading={chat.isPending} disabled={!draft.trim() || !activeId}>
+                <BoltIcon className="h-3.5 w-3.5" />
+                Send
+              </Button>
+            </form>
+          </div>
       </main>
 
       <ContextRail
