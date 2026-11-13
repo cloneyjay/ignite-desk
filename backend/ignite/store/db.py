@@ -253,6 +253,57 @@ class Store:
 
     # -------------------------------------------------------------------- orders
 
+    def begin_order(
+        self,
+        decision_id: str,
+        symbol: str,
+        side: str,
+        lots: float,
+        sl: float | None = None,
+        tp: float | None = None,
+        comment: str | None = None,
+    ) -> bool:
+        """Claim an idempotency key. False means this decision already ran."""
+        try:
+            self._conn.execute(
+                """
+                INSERT INTO orders
+                    (id, created_at, symbol, side, lots, sl, tp, state, comment)
+                VALUES (?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    decision_id,
+                    utc_now(),
+                    symbol,
+                    side,
+                    lots,
+                    sl,
+                    tp,
+                    "sending",
+                    comment,
+                ),
+            )
+            self._conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+    def update_order(self, order_id: str, **fields: Any) -> None:
+        if not fields:
+            return
+        columns = ", ".join(f"{key}=?" for key in fields)
+        self._conn.execute(
+            f"UPDATE orders SET {columns} WHERE id=?",
+            (*fields.values(), order_id),
+        )
+        self._conn.commit()
+
+    def order(self, order_id: str) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            "SELECT * FROM orders WHERE id=?", (order_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
     def insert_order(self, order: dict[str, Any]) -> None:
         columns = ", ".join(order)
         placeholders = ", ".join("?" for _ in order)

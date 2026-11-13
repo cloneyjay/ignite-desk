@@ -31,6 +31,7 @@ class FakeMCP:
         self.margin = 7.82
         self.next_ticket = "900001"
         self.blackout_events: list[dict[str, Any]] = []
+        self.drop_sl_tp = False
 
     def initialize(self) -> dict[str, Any]:
         return {"serverInfo": {"name": "fake"}}
@@ -101,6 +102,8 @@ class FakeMCP:
                     "volume": args["volume"],
                     "price_open": self.ask if args["type"] == "buy" else self.bid,
                     "price_last": self.ask,
+                    "sl": None if self.drop_sl_tp else args.get("sl"),
+                    "tp": None if self.drop_sl_tp else args.get("tp"),
                     "profit": 0.0,
                     "swaps": 0.0,
                     "contract_size": 100.0,
@@ -151,6 +154,20 @@ class FakeMCP:
             return {"orders": [], "deals": [], "positions": []}
         if name == "terminal_get_info":
             return {"ok": True, "terminal": {"connection": {"state": "synchronized"}}}
+        if name == "trade_modify_sl_tp":
+            if not self.drop_sl_tp:
+                for position in self.positions:
+                    if str(position["position_id"]) == str(args.get("position_ticket")):
+                        position["sl"] = args.get("sl", position.get("sl"))
+                        position["tp"] = args.get("tp", position.get("tp"))
+            return {"ok": True, "result": {"retcode": 0}}
+        if name == "trade_close_single_position":
+            self.positions = [
+                position
+                for position in self.positions
+                if str(position["position_id"]) != str(args.get("position_ticket"))
+            ]
+            return {"ok": True, "result": {"retcode": 0}}
         if name == "add_marketwatch_symbol":
             return {"ok": True}
         if name == "remove_marketwatch_symbol":
