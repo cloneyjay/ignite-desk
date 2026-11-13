@@ -1,4 +1,4 @@
-type IconProps = { className?: string };
+type IconProps = { className?: string; title?: string };
 
 const base = "h-4 w-4";
 
@@ -143,6 +143,29 @@ export function TerminalIcon({ className = base }: IconProps) {
       <path d="M4 17l10.5-10.5" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M20 17H4" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M10 7h.01" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function WifiIcon({ className = base, title }: IconProps) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+      {title && <title>{title}</title>}
+      <path d="M5 13a10 10 0 0 1 14 0" strokeLinecap="round" />
+      <path d="M8.5 16.5a5 5 0 0 1 7 0" strokeLinecap="round" />
+      <path d="M12 20h.01" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function WifiOffIcon({ className = base, title }: IconProps) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+      {title && <title>{title}</title>}
+      <path d="M5 13a10 10 0 0 1 14 0" strokeLinecap="round" />
+      <path d="M8.5 16.5a5 5 0 0 1 7 0" strokeLinecap="round" />
+      <path d="M12 20h.01" strokeLinecap="round" />
+      <line x1="1" y1="1" x2="23" y2="23" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
     </svg>
   );
 }
