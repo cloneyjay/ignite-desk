@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Approved design, pending implementation plan |
+| **Status** | Implemented: slice 1 (foundation) |
 | **Date** | 2026-11-13 |
 | **Scope** | Local, single-operator, autonomous trading platform |
 | **Supersedes** | `2026-11-13-agent-workbench-spec.md` §2 and §10 (LLM execution authority) |
