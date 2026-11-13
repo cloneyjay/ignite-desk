@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -54,6 +55,18 @@ class Store:
         wanted = {
             "drafts": {"margin": "REAL", "worst_case_usd": "REAL"},
             "orders": {"position_id": "TEXT", "comment": "TEXT", "error": "TEXT"},
+            "agent_config": {"version": "INTEGER NOT NULL DEFAULT 1"},
+            "agent_positions": {
+                "status": "TEXT NOT NULL DEFAULT 'open'",
+                "decision_id": "TEXT",
+                "entry_deal": "TEXT",
+                "initial_risk_usd": "REAL",
+                "initial_sl": "REAL",
+                "mfe": "REAL",
+                "mae": "REAL",
+                "last_synced_at": "TEXT",
+                "broker_snapshot_json": "TEXT",
+            },
         }
         for table, columns in wanted.items():
             existing = {row["name"] for row in self._conn.execute(f"PRAGMA table_info({table})")}
@@ -192,6 +205,18 @@ class Store:
         row = self._conn.execute("SELECT * FROM drafts WHERE id=?", (draft_id,)).fetchone()
         return dict(row) if row else None
 
+    def pending_drafts(self, limit: int = 20) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            """
+            SELECT * FROM drafts
+            WHERE state IN ('draft', 'blocked')
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     def insert_draft(self, draft: dict[str, Any]) -> None:
         columns = ", ".join(draft)
         placeholders = ", ".join("?" for _ in draft)
@@ -328,6 +353,92 @@ class Store:
             (key, value, value),
         )
         self._conn.commit()
+
+    # ---------------------------------------------------------- agent sessions
+
+    def create_agent_session(self, session_id: str, title: str) -> dict[str, Any]:
+        now = utc_now()
+        self._conn.execute(
+            """
+            INSERT INTO agent_sessions (id, title, created_at, updated_at)
+            VALUES (?,?,?,?)
+            """,
+            (session_id, title, now, now),
+        )
+        self._conn.commit()
+        return {
+            "id": session_id,
+            "title": title,
+            "created_at": now,
+            "updated_at": now,
+            "archived": False,
+        }
+
+    def agent_sessions(self, limit: int = 50) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            """
+            SELECT * FROM agent_sessions
+            WHERE archived=0
+            ORDER BY updated_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [{**dict(row), "archived": bool(row["archived"])} for row in rows]
+
+    def agent_session(self, session_id: str) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            "SELECT * FROM agent_sessions WHERE id=?", (session_id,)
+        ).fetchone()
+        return {**dict(row), "archived": bool(row["archived"])} if row else None
+
+    def add_agent_message(self, message: dict[str, Any]) -> dict[str, Any]:
+        self._conn.execute(
+            """
+            INSERT INTO agent_messages (
+                id, session_id, created_at, role, content, status, tool_name,
+                tool_args_json, tool_result_json, latency_ms, links_json
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                message["id"],
+                message["session_id"],
+                message["created_at"],
+                message["role"],
+                message["content"],
+                message.get("status", "ok"),
+                message.get("tool_name"),
+                message.get("tool_args_json"),
+                message.get("tool_result_json"),
+                message.get("latency_ms"),
+                message.get("links_json"),
+            ),
+        )
+        self._conn.execute(
+            "UPDATE agent_sessions SET updated_at=? WHERE id=?",
+            (message["created_at"], message["session_id"]),
+        )
+        self._conn.commit()
+        return message
+
+    def agent_messages(self, session_id: str, limit: int = 200) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            """
+            SELECT * FROM agent_messages
+            WHERE session_id=?
+            ORDER BY created_at ASC
+            LIMIT ?
+            """,
+            (session_id, limit),
+        ).fetchall()
+        messages = []
+        for row in rows:
+            item = dict(row)
+            for key in ("tool_args_json", "tool_result_json", "links_json"):
+                raw = item.pop(key)
+                item[key.removesuffix("_json")] = json.loads(raw) if raw else None
+            messages.append(item)
+        return messages
 
     def kill_switch(self) -> bool:
         return self.setting("kill_switch", "0") == "1"
@@ -528,18 +639,90 @@ class Store:
         return dict(row) if row else None
 
     def set_agent_config(self, enabled: bool, config_json: str) -> None:
+        self.write_agent_config(enabled, config_json)
+
+    def read_agent_config(self) -> dict[str, Any] | None:
+        return self.agent_config()
+
+    def write_agent_config(self, enabled: bool, config_json: str) -> int:
+        """Persist the global config and return the new version."""
         self._conn.execute(
             """
-            INSERT INTO agent_config (key, enabled, config_json, updated_at)
-            VALUES ('global', ?, ?, ?)
+            INSERT INTO agent_config (key, enabled, config_json, updated_at, version)
+            VALUES ('global', ?, ?, ?, 1)
             ON CONFLICT(key) DO UPDATE SET
                 enabled=excluded.enabled,
                 config_json=excluded.config_json,
-                updated_at=excluded.updated_at
+                updated_at=excluded.updated_at,
+                version=agent_config.version + 1
             """,
             (int(enabled), config_json, utc_now()),
         )
         self._conn.commit()
+        row = self._conn.execute(
+            "SELECT version FROM agent_config WHERE key='global'"
+        ).fetchone()
+        return int(row["version"])
+
+    # ------------------------------------------------------------------- events
+
+    def append_agent_event(
+        self,
+        kind: str,
+        severity: str = "info",
+        symbol: str | None = None,
+        decision_id: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        event_id = uuid.uuid4().hex
+        created = utc_now()
+        cursor = self._conn.execute(
+            """
+            INSERT INTO agent_events
+                (id, created_at, kind, severity, symbol, decision_id, payload_json)
+            VALUES (?,?,?,?,?,?,?)
+            """,
+            (
+                event_id,
+                created,
+                kind,
+                severity,
+                symbol,
+                decision_id,
+                json.dumps(payload or {}, default=str),
+            ),
+        )
+        self._conn.commit()
+        return {
+            "seq": int(cursor.lastrowid),
+            "id": event_id,
+            "created_at": created,
+            "kind": kind,
+            "severity": severity,
+            "symbol": symbol,
+            "decision_id": decision_id,
+            "payload": payload or {},
+        }
+
+    def agent_events(
+        self, decision_id: str | None = None, limit: int = 200
+    ) -> list[dict[str, Any]]:
+        if decision_id:
+            rows = self._conn.execute(
+                "SELECT * FROM agent_events WHERE decision_id=? ORDER BY seq DESC LIMIT ?",
+                (decision_id, limit),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM agent_events ORDER BY seq DESC LIMIT ?", (limit,)
+            ).fetchall()
+        events = []
+        for row in reversed(rows):
+            item = dict(row)
+            raw = item.pop("payload_json")
+            item["payload"] = json.loads(raw) if raw else {}
+            events.append(item)
+        return events
 
     # ---------------------------------------------------------------- agent decisions
 

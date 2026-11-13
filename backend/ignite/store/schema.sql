@@ -101,6 +101,32 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS agent_sessions (
+    id         TEXT PRIMARY KEY,
+    title      TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    archived   INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS agent_messages (
+    id             TEXT PRIMARY KEY,
+    session_id     TEXT NOT NULL,
+    created_at     TEXT NOT NULL,
+    role           TEXT NOT NULL,
+    content        TEXT NOT NULL,
+    status         TEXT NOT NULL DEFAULT 'ok',
+    tool_name      TEXT,
+    tool_args_json TEXT,
+    tool_result_json TEXT,
+    latency_ms     INTEGER,
+    links_json     TEXT,
+    FOREIGN KEY(session_id) REFERENCES agent_sessions(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_messages_session_time
+    ON agent_messages (session_id, created_at);
+
 CREATE TABLE IF NOT EXISTS audit_log (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     ts          TEXT NOT NULL,
@@ -172,8 +198,28 @@ CREATE TABLE IF NOT EXISTS agent_config (
     key       TEXT PRIMARY KEY,
     enabled   INTEGER NOT NULL DEFAULT 0,
     config_json TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    version   INTEGER NOT NULL DEFAULT 1
 );
+
+-- Append-only agent audit trail. Every tool call, guard, order and lifecycle
+-- transition writes one row. The UI projects tool activity from this table.
+CREATE TABLE IF NOT EXISTS agent_events (
+    seq          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id           TEXT NOT NULL UNIQUE,
+    created_at   TEXT NOT NULL,
+    kind         TEXT NOT NULL,
+    severity     TEXT NOT NULL DEFAULT 'info',
+    symbol       TEXT,
+    decision_id  TEXT,
+    payload_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_events_decision
+    ON agent_events (decision_id, seq);
+
+CREATE INDEX IF NOT EXISTS idx_agent_events_created
+    ON agent_events (created_at);
 
 -- Every agent decision (audit trail)
 CREATE TABLE IF NOT EXISTS agent_decisions (
@@ -223,7 +269,16 @@ CREATE TABLE IF NOT EXISTS agent_positions (
     closed_at       TEXT,
     close_reason    TEXT,
     realised_pnl    REAL,
-    r_multiple      REAL
+    r_multiple      REAL,
+    status          TEXT NOT NULL DEFAULT 'open',
+    decision_id     TEXT,
+    entry_deal      TEXT,
+    initial_risk_usd REAL,
+    initial_sl      REAL,
+    mfe             REAL,
+    mae             REAL,
+    last_synced_at  TEXT,
+    broker_snapshot_json TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_positions_symbol
