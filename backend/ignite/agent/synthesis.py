@@ -94,6 +94,10 @@ def build_technical_context(rt: Runtime, symbol: str, timeframe: str) -> Technic
             return TechnicalContext(trend="flat", volatility_regime="normal", key_levels={}, atr=0.0)
 
         features = row.get("features", {}) if isinstance(row, dict) else {}
+        if isinstance(row, dict) and row.get("features_json"):
+            import json
+
+            features = json.loads(row["features_json"])
 
         return TechnicalContext(
             trend=features.get("trend", "flat"),
@@ -107,6 +111,8 @@ def build_technical_context(rt: Runtime, symbol: str, timeframe: str) -> Technic
 
 def _assess_volatility_regime(atr: float) -> str:
     """Simple volatility regime assessment."""
+    if not atr or atr <= 0:
+        return "normal"
     if atr < 5:
         return "compression"
     if atr > 20:

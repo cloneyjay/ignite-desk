@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Literal
@@ -18,6 +19,7 @@ from backend.ignite.agent.synthesis import (
     synthesise,
 )
 from backend.ignite.services.runtime import Runtime
+from backend.ignite.services.execution import ExecutionError, execute_draft_autonomous
 
 
 @dataclass
@@ -55,7 +57,7 @@ class AgentEngine:
         started_at = datetime.now(timezone.utc).isoformat()
         cycle_id = uuid.uuid4().hex
 
-        if not self.config.enabled:
+        if not self._is_enabled():
             return CycleResult(
                 cycle_id=cycle_id,
                 started_at=started_at,
@@ -65,6 +67,13 @@ class AgentEngine:
 
         guards = self._check_guards()
         if not guards.ok:
+            blocked_at = datetime.now(timezone.utc).isoformat()
+            self.rt.store.set_setting("agent_last_guard", guards.reason or "Trading guard blocked the cycle")
+            self.rt.store.set_setting("agent_last_cycle", blocked_at)
+            self.rt.events.publish(
+                "agent.cycle.blocked",
+                {"cycle_id": cycle_id, "reason": guards.reason},
+            )
             return CycleResult(
                 cycle_id=cycle_id,
                 started_at=started_at,
@@ -97,6 +106,16 @@ class AgentEngine:
                 )
 
         completed_at = datetime.now(timezone.utc).isoformat()
+        self.rt.store.set_setting("agent_last_cycle", completed_at)
+        self.rt.events.publish(
+            "agent.cycle.completed",
+            {
+                "cycle_id": cycle_id,
+                "started_at": started_at,
+                "completed_at": completed_at,
+                "decisions": len(decisions),
+            },
+        )
         return CycleResult(
             cycle_id=cycle_id,
             started_at=started_at,
@@ -139,6 +158,7 @@ class AgentEngine:
                 equity,
                 risk_config=risk_config,
             )
+            self.rt.store.save_analysis(result, self.rt.settings.draft_ttl_s)
         except Exception as exc:  # noqa: BLE001
             return SymbolDecision(
                 symbol=symbol,
@@ -180,11 +200,38 @@ class AgentEngine:
         # Execute if ENTER and draft is executable
         executed = False
         draft_id = None
+        execution_error = None
         if decision.action == "ENTER" and result.draft and not result.draft.blocked:
             draft_id = result.draft_id
-            # Note: Actual execution goes through confirmation flow
-            # For agent mode, we'd auto-confirm here
-            executed = True
+            try:
+                execute_draft_autonomous(self.rt, draft_id)
+                executed = True
+            except ExecutionError as exc:
+                execution_error = str(exc)
+                reasons.append(f"Autonomous execution blocked: {exc}")
+
+        self.rt.store.insert_agent_decision(
+            {
+                "id": uuid.uuid4().hex,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "analysis_id": result.analysis_id,
+                "signal_side": result.signal.side.upper(),
+                "p_up": result.signal.p_up,
+                "edge_atr": result.signal.edge_atr,
+                "decision": decision.action,
+                "confidence": decision.confidence,
+                "reasoning": ". ".join(reasons),
+                "executed": executed,
+                "execution_error": execution_error,
+                "draft_id": draft_id,
+                "attribution_json": json.dumps(attribution.__dict__),
+                "fundamental_json": json.dumps(fundamental.__dict__),
+                "technical_json": json.dumps(technical.__dict__),
+                "risk_json": json.dumps(self.rt.risk_config().__dict__),
+            }
+        )
 
         return SymbolDecision(
             symbol=symbol,
@@ -197,13 +244,19 @@ class AgentEngine:
             reasoning=reasoning,
             draft_id=draft_id,
             executed=executed,
-            error=None,
+            error=execution_error,
         )
 
     def _get_symbols(self) -> list[str]:
         if self.config.symbols:
             return list(self.config.symbols)
         return [s["symbol"] for s in self.rt.store.list_symbols()]
+
+    def _is_enabled(self) -> bool:
+        stored = self.rt.store.agent_config()
+        if stored is not None:
+            return bool(stored.get("enabled"))
+        return self.config.enabled
 
     def _check_guards(self) -> "GuardResult":
         """Check global guards before running cycle."""
@@ -217,19 +270,18 @@ class AgentEngine:
         if self.rt.kill_switch():
             return GuardResult(ok=False, reason="Kill switch enabled")
 
-        # Check daily loss limit
-        try:
-            from backend.ignite.services.broker import realised_pnl_today
-            pnl = realised_pnl_today(self.rt.mcp, self.rt.clock())
-            equity = float(self.rt.account().get("equity") or 0.0)
-            if equity > 0 and pnl < -equity * self.config.daily_loss_limit_pct:
-                return GuardResult(ok=False, reason=f"Daily loss limit hit: {pnl:.2f}")
-        except Exception:
-            pass
+        config = self.rt.config()
+        pnl = self.rt.ledger.daily()
+        if not pnl.available:
+            return GuardResult(ok=False, reason="daily_pnl_unavailable")
+        if pnl.blocked:
+            return GuardResult(
+                ok=False, reason=f"Daily loss limit hit: {pnl.total_usd:.2f}"
+            )
 
         # Check max concurrent positions
         positions = self.rt.store.agent_positions()
-        if len(positions) >= self.config.max_concurrent_positions:
+        if len(positions) >= config.max_concurrent_positions:
             return GuardResult(ok=False, reason="Max concurrent positions reached")
 
         return GuardResult(ok=True)

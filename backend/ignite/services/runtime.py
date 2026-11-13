@@ -30,6 +30,7 @@ from backend.ignite.mcp.client import MCPClient, MCPError
 from backend.ignite.services.broker import BrokerError
 from backend.ignite.services.config_service import ConfigService
 from backend.ignite.services.events import EventBus
+from backend.ignite.services.ledger import Ledger
 from backend.ignite.services.news import NewsService
 from backend.ignite.store.db import Store, utc_now
 
@@ -121,6 +122,7 @@ class Runtime:
 
         self._seed_config = AgentConfig.from_env()
         self.config_service = ConfigService(self.store, self._seed_config, self.events)
+        self.ledger = Ledger(self)
 
     # ----------------------------------------------------------------- lifecycle
 

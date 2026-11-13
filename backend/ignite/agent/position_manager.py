@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Literal
@@ -29,6 +30,8 @@ class AgentPosition:
     close_reason: str | None
     realised_pnl: float | None
     r_multiple: float | None
+    managed_by_agent: int = 1
+    last_managed_at: str | None = None
 
 
 @dataclass
@@ -48,12 +51,83 @@ class PositionManager:
         self.config = config
 
     def manage_all(self) -> list["PositionAction"]:
+        if not self._is_enabled() or self.rt.kill_switch():
+            return []
+        self._sync_positions()
         actions = []
         positions = self.rt.store.agent_positions()
         for pos_data in positions:
             pos = AgentPosition(**pos_data)
-            actions.extend(self.manage_position(pos))
+            for action in self.manage_position(pos):
+                actions.append(action)
+                self._apply_action(action, pos)
         return actions
+
+    def _is_enabled(self) -> bool:
+        config = self.rt.store.agent_config()
+        return bool(config and config.get("enabled"))
+
+    def _sync_positions(self) -> None:
+        live = self.rt.positions()
+        live_tickets = {str(position["ticket"]) for position in live}
+        for position in live:
+            if not str(position.get("comment") or "").startswith("ignite "):
+                continue
+            existing = self.rt.store.agent_position(str(position["ticket"])) or {}
+            self.rt.store.upsert_agent_position(
+                {
+                    "ticket": str(position["ticket"]),
+                    "symbol": position["symbol"],
+                    "side": position["side"],
+                    "entry_price": position["price_open"],
+                    "volume": position["lots"],
+                    "sl": position.get("sl"),
+                    "tp": position.get("tp"),
+                    "opened_at": position["open_time"] or datetime.now(timezone.utc).isoformat(),
+                    "managed_by_agent": 1,
+                    "trail_sl": existing.get("trail_sl"),
+                    "scale_in_count": existing.get("scale_in_count", 0),
+                    "scale_out_count": existing.get("scale_out_count", 0),
+                    "max_favourable_atr": existing.get("max_favourable_atr"),
+                    "max_adverse_atr": existing.get("max_adverse_atr"),
+                    "last_managed_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+        for position in self.rt.store.agent_positions():
+            if position["ticket"] not in live_tickets:
+                self.rt.store.close_agent_position(
+                    position["ticket"], "BROKER_CLOSED", 0.0, 0.0
+                )
+
+    def _apply_action(self, action: "PositionAction", pos: "AgentPosition") -> None:
+        from backend.ignite.services.broker import close_position, modify_position_sl_tp
+
+        try:
+            with self.rt.execution_lock:
+                if action.type == "TRAIL_SL":
+                    modify_position_sl_tp(
+                        self.rt.mcp, pos.symbol, action.ticket, action.new_sl, pos.tp
+                    )
+                elif action.type == "CLOSE":
+                    close_position(self.rt.mcp, pos.symbol, action.ticket)
+                    self.rt.store.close_agent_position(
+                        action.ticket, action.reason or "AGENT_EXIT", 0.0, 0.0
+                    )
+                elif action.type == "SCALE_OUT":
+                    raise RuntimeError("MT5 MCP close tool does not support partial volume")
+            self.rt.store.audit(
+                "agent",
+                f"position_{action.type.lower()}",
+                {"ticket": action.ticket, "reason": action.reason},
+                "ok",
+            )
+        except Exception as exc:  # noqa: BLE001 - preserve broker failure in audit
+            self.rt.store.audit(
+                "agent",
+                f"position_{action.type.lower()}_failed",
+                {"ticket": action.ticket, "reason": action.reason},
+                str(exc),
+            )
 
     def manage_position(self, pos: AgentPosition) -> list["PositionAction"]:
         actions = []
@@ -69,16 +143,6 @@ class PositionManager:
         if new_sl is not None:
             actions.append(PositionAction(type="TRAIL_SL", ticket=pos.ticket, new_sl=new_sl))
 
-        # 3. Scale in
-        scale_in = self.check_scale_in(pos)
-        if scale_in:
-            actions.append(scale_in)
-
-        # 4. Scale out
-        scale_out = self.check_scale_out(pos)
-        if scale_out:
-            actions.append(scale_out)
-
         return actions
 
     def trail_sl(self, pos: AgentPosition, atr: float | None = None) -> float | None:
@@ -86,13 +150,26 @@ class PositionManager:
         if atr is None:
             atr = self._get_atr(pos.symbol)
 
+        current_price = self._get_current_price(pos.symbol)
+        if current_price is None:
+            return None
         if pos.side.upper() == "BUY":
-            new_sl = pos.entry_price - self.config.trail_sl_atr * atr
-            if pos.trail_sl is None or new_sl > pos.trail_sl:
+            if current_price <= pos.entry_price:
+                return None
+            new_sl = min(
+                current_price - self.config.trail_sl_atr * atr,
+                current_price - 0.01,
+            )
+            if pos.sl is None or new_sl > pos.sl:
                 return round(new_sl, 2)
         else:
-            new_sl = pos.entry_price + self.config.trail_sl_atr * atr
-            if pos.trail_sl is None or new_sl < pos.trail_sl:
+            if current_price >= pos.entry_price:
+                return None
+            new_sl = max(
+                current_price + self.config.trail_sl_atr * atr,
+                current_price + 0.01,
+            )
+            if pos.sl is None or new_sl < pos.sl:
                 return round(new_sl, 2)
         return None
 
@@ -155,14 +232,11 @@ class PositionManager:
                 return "SIGNAL_REVERSAL"
 
         # Daily loss limit
-        try:
-            from backend.ignite.services.broker import realised_pnl_today
-            pnl = realised_pnl_today(self.rt.mcp, self.rt.clock())
-            equity = float(self.rt.account().get("equity") or 0.0)
-            if equity > 0 and pnl < -equity * self.config.daily_loss_limit_pct:
-                return "DAILY_LOSS_LIMIT"
-        except Exception:
-            pass
+        pnl = self.rt.ledger.daily()
+        if not pnl.available:
+            return "DAILY_PNL_UNAVAILABLE"
+        if pnl.blocked:
+            return "DAILY_LOSS_LIMIT"
 
         # Session end
         now = datetime.now(timezone.utc)
@@ -183,8 +257,11 @@ class PositionManager:
         try:
             row = self.rt.store.latest_analysis(symbol, self.config.timeframe)
             if row:
-                features = row.get("features", {})
-                return features.get("atr")
+                features = row.get("features")
+                if not isinstance(features, dict):
+                    features = json.loads(row.get("features_json") or "{}")
+                atr = features.get("atr")
+                return float(atr) if atr is not None else None
         except Exception:
             pass
         return None
