@@ -276,6 +276,9 @@ class AgentExecutionGateway:
         if position is None:
             return OrderResult(False, "UNRESOLVED", f"no open position {ticket}")
 
+        # Kill switch allows closes (reducing risk)
+        # No kill switch check needed here - always allow close
+
         with rt.execution_lock:
             try:
                 broker.close_position(rt.mcp, position["symbol"], str(ticket))
@@ -300,6 +303,24 @@ class AgentExecutionGateway:
             return OrderResult(False, "BROKER", str(exc))
         if position is None:
             return OrderResult(False, "UNRESOLVED", f"no open position {ticket}")
+
+        # Kill switch: allow modifications that reduce risk, block those that increase it
+        if rt.kill_switch():
+            current_sl = position.get("sl")
+            current_tp = position.get("tp")
+            side = position.get("side", "").upper()
+            
+            # Check if modification increases risk
+            if sl is not None and current_sl is not None:
+                if side == "BUY" and sl < current_sl:
+                    return OrderResult(False, "KILL_SWITCH", "modification widens SL (increases risk)")
+                if side == "SELL" and sl > current_sl:
+                    return OrderResult(False, "KILL_SWITCH", "modification widens SL (increases risk)")
+            if tp is not None and current_tp is not None:
+                if side == "BUY" and tp > current_tp:
+                    return OrderResult(False, "KILL_SWITCH", "modification widens TP (increases risk)")
+                if side == "SELL" and tp < current_tp:
+                    return OrderResult(False, "KILL_SWITCH", "modification widens TP (increases risk)")
 
         with rt.execution_lock:
             try:
