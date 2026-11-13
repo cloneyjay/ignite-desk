@@ -77,7 +77,9 @@ Two exceptions are contract enforcement, not preference:
 
 These always hold, in every mode and for every caller (agent, chat, REST):
 
-- Kill switch blocks all broker writes.
+- Kill switch blocks new entries and risk-increasing modifications. It never
+  blocks a close or a risk-reducing modification; an operator must always be
+  able to flatten.
 - Daily loss stop blocks new entries; it never blocks exits.
 - Portfolio open-risk cap and per-symbol position cap block new entries.
 - Margin must be sufficient at the requested size.
