@@ -45,7 +45,16 @@ export class ApiError extends Error {
   }
 }
 
-const BASE = "/api";
+const env = import.meta.env as Record<string, string | undefined>;
+const BASE =
+  env.VITE_API_BASE ??
+  (typeof window !== "undefined" && window.location.origin
+    ? window.location.origin + "/api"
+    : "/api");
+
+export function getApiBase(): string {
+  return BASE;
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const method = (init?.method ?? "GET").toUpperCase();

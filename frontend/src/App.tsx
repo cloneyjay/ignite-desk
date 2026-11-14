@@ -15,12 +15,14 @@ import {
   PowerIcon,
 } from "./components/icons";
 import { time } from "./lib/format";
+import { getApiBase } from "./lib/api";
 import Portfolio from "./pages/Portfolio";
 import AgentWorkbench from "./pages/AgentWorkbench";
 import Watchlist from "./pages/Watchlist";
 import History from "./pages/History";
 import News from "./pages/News";
-import { useEffect, useState } from "react";
+import { useConnectionStatus } from "./hooks/useConnectionStatus";
+import { useEffect, useRef, useState } from "react";
 
 const NAV = [
   { to: "/", label: "Agent", index: "01", icon: BoltIcon, end: true },
@@ -219,6 +221,7 @@ function SystemRow({
 function Header({ streamStatus }: { streamStatus: StreamStatus }) {
   const location = useLocation();
   const health = useHealth();
+  const connection = useConnectionStatus();
   const page = PAGES[location.pathname] ?? PAGES["/"];
   const [now, setNow] = useState(() => new Date());
 
@@ -257,13 +260,17 @@ function Header({ streamStatus }: { streamStatus: StreamStatus }) {
           <span className="hidden sm:inline">stream&nbsp;</span>
           {streamLabel}
         </Badge>
-        {health.data ? (
+        {!connection.data?.connected ? (
+          <Badge tone="short" dot>
+            API unreachable
+          </Badge>
+        ) : (
           <span className="hidden 2xl:inline-flex">
-            <Badge tone={health.data.terminal.connected ? "long" : "short"} dot>
-              {health.data.terminal.connected ? "terminal synced" : "terminal offline"}
+            <Badge tone={health.data?.terminal.connected ? "long" : "short"} dot>
+              {health.data?.terminal.connected ? "terminal synced" : "terminal offline"}
             </Badge>
           </span>
-        ) : null}
+        )}
         <div className="flex items-center gap-2 border-l border-line/70 pl-3">
           <ClockIcon className="h-3.5 w-3.5 text-text-faint" />
           <div className="leading-none">
@@ -324,6 +331,35 @@ function Banners() {
 }
 
 function Layout({ streamStatus }: { streamStatus: StreamStatus }) {
+  const connection = useConnectionStatus();
+  const { push } = useToast();
+  const prevConnected = useRef(connection.data?.connected ?? null);
+
+  useEffect(() => {
+    const current = connection.data?.connected;
+    const previous = prevConnected.current;
+    if (previous === null) {
+      prevConnected.current = current ?? false;
+      return;
+    }
+    if (current === false && previous === true) {
+      push({
+        tone: "danger",
+        title: "API unreachable",
+        message: "The backend API is not reachable. Check that the API server is running on " +
+          getApiBase(),
+      });
+    }
+    if (current === true && previous === false) {
+      push({
+        tone: "ok",
+        title: "API restored",
+        message: "Connection to the backend API has been restored.",
+      });
+    }
+    prevConnected.current = current ?? false;
+  }, [connection.data?.connected, push]);
+
   return (
     <div className="app-shell">
       <Sidebar />
