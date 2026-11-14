@@ -1160,6 +1160,10 @@ select.field {
   font-family: var(--font-display);
 }
 
+.smooth-scroll {
+  scroll-behavior: smooth;
+}
+
 @media print {
   .no-print {
     display: none !important;

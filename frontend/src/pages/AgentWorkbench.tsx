@@ -132,6 +132,8 @@ function ChatWorkspace({ streamStatus, activeId }: { streamStatus: StreamStatus;
   const chat = useAgentChat();
   const [draft, setDraft] = useState("");
   const [chatError, setChatError] = useState<string | null>(null);
+  const messagesRef = useRef<HTMLDivElement>(null);
+  const userAtBottomRef = useRef(true);
 
   const submit = (text: string) => {
     const value = text.trim();
@@ -141,6 +143,34 @@ function ChatWorkspace({ streamStatus, activeId }: { streamStatus: StreamStatus;
     chat.mutate({ text: value, sessionId: activeId }, {
       onError: (e) => setChatError(e instanceof ApiError ? e.message : String(e)),
     });
+  };
+
+  const scrollToBottom = () => {
+    const el = messagesRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  };
+
+  // Auto-scroll to bottom when new messages arrive, but only if the user was
+  // already near the bottom. If they scrolled up to read older messages, don't
+  // yank them back down.
+  useEffect(() => {
+    const el = messagesRef.current;
+    if (!el) return;
+    const wasAtBottom = userAtBottomRef.current;
+    const isNearBottom =
+      el.scrollHeight - el.scrollTop - el.clientHeight <= 40;
+    if (wasAtBottom || isNearBottom) {
+      requestAnimationFrame(scrollToBottom);
+    }
+  }, [messages.data, chat.isPending]);
+
+  // Track whether the user is at the bottom so we don't interrupt reading.
+  const handleScroll = () => {
+    const el = messagesRef.current;
+    if (!el) return;
+    userAtBottomRef.current =
+      el.scrollHeight - el.scrollTop - el.clientHeight <= 40;
   };
 
   return (
@@ -153,7 +183,11 @@ function ChatWorkspace({ streamStatus, activeId }: { streamStatus: StreamStatus;
           </span>
         </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-5 space-y-3">
+      <div
+        ref={messagesRef}
+        onScroll={handleScroll}
+        className="min-h-0 flex-1 overflow-y-auto p-5 space-y-3 smooth-scroll"
+      >
         {messages.isLoading && <div className="text-[12px] text-fog">Loading conversation…</div>}
         {!messages.isLoading && messages.data.length === 0 && (
           <div className="text-center py-16 text-fog text-[12px]">No messages yet. Start a conversation.</div>
