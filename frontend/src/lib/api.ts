@@ -254,4 +254,27 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ confirm }),
     }),
+
+  // Strategies
+  strategies: () => request<{ strategies: any[]; count: number }>("/agent/strategies"),
+  strategy: (strategyId: string) =>
+    request<{ strategy: any; backtests: any[] }>(
+      `/agent/strategies/${strategyId}`
+    ),
+  strategyPromote: (strategyId: string, target: string, confirm: boolean) =>
+    request<{ ok: boolean; strategy_id: string; from: string; to: string }>(
+      `/agent/strategies/${strategyId}/promote`,
+      {
+        method: "POST",
+        body: JSON.stringify({ target, confirm }),
+      }
+    ),
+  strategyDemote: (strategyId: string, confirm: boolean) =>
+    request<{ ok: boolean; strategy_id: string; from: string; to: string }>(
+      `/agent/strategies/${strategyId}/demote`,
+      {
+        method: "POST",
+        body: JSON.stringify({ confirm }),
+      }
+    ),
 };

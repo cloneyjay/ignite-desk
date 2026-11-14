@@ -643,3 +643,84 @@ export interface DecisionExplanation {
   links: { analysis_id: string | null; draft_id: string | null; decision_id: string };
   confidence_score: number;
 }
+
+
+export interface Strategy {
+  id: string;
+  name: string;
+  description: string | null;
+  symbol: string;
+  timeframe: string;
+  mql5_code: string;
+  status: "draft" | "compiled" | "backtested" | "shadow" | "demo" | "live" | "archived";
+  version: number;
+  p_up: number | null;
+  edge_atr: number | null;
+  total_trades: number | null;
+  winning_trades: number | null;
+  losing_trades: number | null;
+  win_rate: number | null;
+  profit_factor: number | null;
+  max_drawdown: number | null;
+  sharpe_ratio: number | null;
+  initial_balance: number | null;
+  final_balance: number | null;
+  parameters: Record<string, any>;
+  created_at: string;
+  updated_at: string;
+  backtest_id: string | null;
+}
+
+export interface StrategyBacktest {
+  id: string;
+  strategy_id: string;
+  version: number;
+  start_date: string;
+  end_date: string;
+  symbol: string;
+  timeframe: string;
+  initial_balance: number;
+  final_balance: number | null;
+  gross_profit: number | null;
+  gross_loss: number | null;
+  net_profit: number | null;
+  profit_factor: number | null;
+  total_trades: number | null;
+  winning_trades: number | null;
+  losing_trades: number | null;
+  win_rate: number | null;
+  max_drawdown: number | null;
+  max_drawdown_pct: number | null;
+  sharpe_ratio: number | null;
+  recovery_factor: number | null;
+  expectancy: number | null;
+  equity_curve: Array<{ ts: string; balance: number; equity: number }>;
+  trades: any[];
+  parameters: Record<string, any>;
+  tester_report: any;
+  created_at: string;
+}
+
+export interface StrategyStrategyResponse {
+  strategy: Strategy;
+  backtests: StrategyBacktest[];
+}
+
+export interface StrategiesListResponse {
+  strategies: Strategy[];
+  count: number;
+}
+
+export interface StrategyPromoteResponse {
+  ok: boolean;
+  strategy_id: string;
+  from: string;
+  to: string;
+}
+
+export interface StrategyDemoteResponse {
+  ok: boolean;
+  strategy_id: string;
+  from: string;
+  to: string;
+}

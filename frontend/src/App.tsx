@@ -18,6 +18,8 @@ import { time } from "./lib/format";
 import { getApiBase } from "./lib/api";
 import Portfolio from "./pages/Portfolio";
 import AgentWorkbench from "./pages/AgentWorkbench";
+import Strategy from "./pages/Strategy";
+import Strategies from "./pages/Strategies";
 import Watchlist from "./pages/Watchlist";
 import History from "./pages/History";
 import News from "./pages/News";
@@ -30,6 +32,7 @@ const NAV = [
   { to: "/watchlist", label: "Watchlist", index: "03", icon: CandleIcon, end: false },
   { to: "/history", label: "History", index: "04", icon: HistoryIcon, end: false },
   { to: "/news", label: "News & calendar", index: "05", icon: NewsIcon, end: false },
+  { to: "/strategies", label: "Strategies", index: "06", icon: BoltIcon, end: false },
 ];
 
 const PAGES: Record<string, { section: string; title: string; subtitle: string }> = {
@@ -57,6 +60,11 @@ const PAGES: Record<string, { section: string; title: string; subtitle: string }
     section: "Context",
     title: "News & calendar",
     subtitle: "Fundamentals and deterministic blackout windows",
+  },
+  "/strategies": {
+    section: "Strategies",
+    title: "Strategies",
+    subtitle: "Strategy development, backtesting and execution",
   },
 };
 
@@ -386,6 +394,8 @@ export default function App() {
         <Route path="watchlist" element={<Watchlist />} />
         <Route path="history" element={<History />} />
         <Route path="news" element={<News />} />
+        <Route path="strategies" element={<Strategies />} />
+        <Route path="strategies/:strategyId" element={<Strategy />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
