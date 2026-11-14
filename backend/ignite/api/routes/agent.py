@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from backend.ignite.agent.chat import ChatRoute, route_or_error
+from backend.ignite.agent.chat_agent import ChatResponse, UnifiedChatAgent
 from backend.ignite.agent.config import AgentConfig, AgentConfigPatch, ConfigError
 from backend.ignite.agent.runner import AgentError, AgentOutput, run_skill
 from backend.ignite.api.deps import get_rt
@@ -679,233 +680,129 @@ def _chat_structure(
     return _action_output(route.skill, text)
 
 
+def _fallback_deterministic(rt: Runtime, text: str) -> ChatResponse:
+    """Deterministic fallback when the LLM is unavailable.
+
+    Handles common read queries without the model so the desk stays usable
+    when NIM cannot be reached.
+    """
+    text_lower = text.lower()
+    tool_calls: list[dict[str, Any]] = []
+
+    if any(w in text_lower for w in ("position", "open trade", "open position")):
+        positions = rt.positions()
+        tool_calls.append(
+            {
+                "name": "account.positions",
+                "arguments": {},
+                "result": {"positions": positions},
+            }
+        )
+        if positions:
+            details = []
+            for p in positions:
+                details.append(
+                    f"{p['symbol']} {p['side']} {p['lots']:g} lots, P/L {p['profit']:.2f}"
+                )
+            narrative = (
+                f"I can see {len(positions)} open MT5 position(s): "
+                + "; ".join(details)
+                + "."
+            )
+        else:
+            narrative = "There are no open MT5 positions right now."
+    elif any(w in text_lower for w in ("risk", "account", "equity")):
+        account = rt.account_payload()
+        positions = rt.positions()
+        equity = float(account.get("equity") or 0.0)
+        tool_calls.append(
+            {
+                "name": "account.snapshot",
+                "arguments": {},
+                "result": {"equity": equity, "positions": len(positions)},
+            }
+        )
+        narrative = (
+            f"Account equity is {equity:.2f}, with {len(positions)} open position(s)."
+        )
+    else:
+        narrative = (
+            "I'm having trouble reaching the model right now. "
+            "Try asking about your positions, risk, or account."
+        )
+
+    return ChatResponse(narrative=narrative, tool_calls=tool_calls, structured={})
+
+
 @router.post("/agent/chat")
 def agent_chat(
     body: ChatRequest, rt: Runtime = Depends(get_rt)
 ) -> dict[str, Any]:
-    """Route a natural-language request to the appropriate skill."""
+    """Route a natural-language request through the unified chat agent."""
     text = body.text.strip()
     if not text:
         raise ApiError(400, "empty_message", "message cannot be empty")
     session = _chat_session(rt, body.session_id, text)
     _save_chat_message(rt, session["id"], "user", text)
     decision_id = uuid.uuid4().hex
+
+    history = rt.store.agent_messages(session["id"])[-12:]
+
     try:
-        route: ChatRoute = route_or_error(text)
-    except ValueError:
-        route = ChatRoute(skill="conversation", args={}, confidence=0.5, needs_analysis=False)
+        agent = UnifiedChatAgent(rt)
+        response = agent.respond(session["id"], text, history)
+    except Exception as exc:  # noqa: BLE001 - LLM unavailable or other error
+        response = _fallback_deterministic(rt, text)
 
-    direct = False
-    try:
-        if route.needs_analysis:
-            # Start analysis job
-            symbol = route.args.get("symbol", "XAUUSD")
-            timeframe = route.args.get("timeframe", "M15")
-            job = start_analysis(rt, symbol, timeframe)
-            _record_tool(
-                rt,
-                decision_id,
-                "market.analysis",
-                symbol=symbol,
-                preview=f"{symbol} {timeframe} analysis queued ({job.id})",
-            )
-            # Wait for job to complete
-            import time
-            start = time.monotonic()
-            timeout = 120.0
-            while True:
-                job_status = rt.job(job.id)
-                if not job_status:
-                    raise ApiError(500, "job_lost", f"job {job.id} disappeared")
-                if job_status.status == "done":
-                    analysis_id = job_status.analysis_id
-                    break
-                if job_status.status == "failed":
-                    raise ApiError(500, "analysis_failed", job_status.error or "unknown error")
-                if time.monotonic() - start > timeout:
-                    raise ApiError(504, "analysis_timeout", f"analysis job timed out after {timeout}s")
-                time.sleep(0.5)
-            subject = analysis_id
-        elif route.skill == "conversation":
-            output = _conversation_output(rt, session["id"], text)
-            _record_tool(
-                rt, decision_id, "aegus.conversation", preview=f"provider={output.provider}"
-            )
-        elif route.skill == "trade_clarification":
-            _record_tool(rt, decision_id, "aegus.trade_intent", preview="clarification asked")
-            side_hint = route.args.get("side")
-            direction = f" {side_hint}" if side_hint else ""
-            output = AgentOutput(
-                run_id="trade-clarification",
-                skill=route.skill,
-                subject=None,
-                narrative=(
-                    f"I can place that{direction} trade through the guarded trading path. "
-                    "Which symbol do you want — for example, “short XAUUSD”? I’ll "
-                    "analyse it first, size it from the account risk rules, and only send it if "
-                    "Autonomous mode is on and every safety check passes."
-                ),
-                provider="deterministic",
-                model=None,
-                status="ok",
-                fallback=False,
-                created_at=utc_now(),
-                latency_ms=0,
-                cards=[],
-                checks={"ok": True},
-            )
-        elif route.skill in {
-            "autonomous_toggle",
-            "add_symbol",
-            "remove_symbol",
-            "close_position",
-        }:
-            output = _chat_action(rt, route, decision_id)
-        elif route.skill in {"calendar", "news", "trade_history"}:
-            output = _chat_market_read(rt, route, decision_id)
-        elif route.skill == "market_structure":
-            output = _chat_structure(rt, route, decision_id)
-        elif route.skill in {"risk_state", "positions", "account_snapshot", "desk_status"}:
-            output = _direct_read_output(rt, route, decision_id)
-            direct = True
-        else:
-            subject = _skill_subject(rt, route.skill, **route.args)
-
-        if not direct and route.skill not in {
-            "conversation",
-            "trade_clarification",
-            "autonomous_toggle",
-            "add_symbol",
-            "remove_symbol",
-            "close_position",
-            "calendar",
-            "news",
-            "trade_history",
-            "market_structure",
-        }:
-            output = run_skill(rt, route.skill, subject, refresh=True)
-            _record_tool(
-                rt,
-                decision_id,
-                f"agent.{route.skill}",
-                preview=f"provider={output.provider}, status={output.status}",
-            )
-        if route.wants_execution:
-            draft = rt.store.draft_for_analysis(subject)
-            requested_side = route.args.get("side")
-            analysis_row = rt.store.get_analysis(subject)
-            actual_side = str((analysis_row or {}).get("signal") or "").lower()
-            if requested_side and actual_side != requested_side:
-                _record_tool(
-                    rt,
-                    decision_id,
-                    "execution.guarded_gateway",
-                    status="failed",
-                    preview=f"requested {requested_side}, setup is {actual_side or 'none'}",
-                )
-                output = replace(
-                    output,
-                    narrative=(
-                        f"{output.narrative} I did not send an order because you asked "
-                        f"for a {requested_side} trade, but the current setup is "
-                        f"{actual_side or 'not tradable'}."
-                    ),
-                )
-            elif draft is None:
-                _record_tool(
-                    rt,
-                    decision_id,
-                    "execution.guarded_gateway",
-                    status="failed",
-                    preview="no draft for analysis",
-                )
-                output = replace(
-                    output,
-                    narrative=(
-                        f"{output.narrative} I could not prepare an order for this setup, "
-                        "so nothing was sent."
-                    ),
-                )
-            elif rt.config().enabled:
-                try:
-                    execution = execute_draft_autonomous(rt, draft["id"])
-                    _record_tool(
-                        rt,
-                        decision_id,
-                        "execution.guarded_gateway",
-                        symbol=route.args.get("symbol"),
-                        preview=f"confirmed={execution.get('confirmed')}",
-                    )
-                    output = replace(
-                        output,
-                        narrative=(
-                            f"{output.narrative} I sent the order through the guarded "
-                            f"autonomous path. Broker confirmation: "
-                            f"{'received' if execution.get('confirmed') else 'pending reconciliation'}."
-                        ),
-                    )
-                except ExecutionError as exc:
-                    _record_tool(
-                        rt,
-                        decision_id,
-                        "execution.guarded_gateway",
-                        status="failed",
-                        symbol=route.args.get("symbol"),
-                        preview=str(exc),
-                    )
-                    output = replace(
-                        output,
-                        narrative=(
-                            f"{output.narrative} I did not send the order because the "
-                            f"live safety check stopped it: {exc}."
-                        ),
-                    )
-            else:
-                _record_tool(
-                    rt,
-                    decision_id,
-                    "execution.guarded_gateway",
-                    status="skipped",
-                    symbol=route.args.get("symbol"),
-                    preview="autonomous mode is off",
-                )
-                output = replace(
-                    output,
-                    narrative=(
-                        f"{output.narrative} I prepared the setup, but Autonomous mode "
-                        "is off, so I did not send an order. Review it in Watchlist and "
-                        "use the confirmation flow if you want to proceed."
-                    ),
-                )
-    except AgentError as exc:
-        raise ApiError(400, "agent_error", str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001
-        raise ApiError(500, "agent_error", str(exc)) from exc
-
-    tool_calls = _tool_trace(rt, decision_id)
-    for tool in tool_calls:
+    # Save tool call messages
+    for tool in response.tool_calls:
+        tool["decision_id"] = decision_id
+        _record_tool(
+            rt,
+            decision_id,
+            tool.get("name", "unknown"),
+            status="completed",
+            preview=str(tool.get("result", ""))[:240],
+        )
         _save_chat_message(
             rt,
             session["id"],
             "tool",
-            f"{tool['name']} {tool['status']}",
+            json.dumps(tool.get("result", "")),
             tool=tool,
         )
 
-    response = {
-        "route": {"skill": route.skill, "args": route.args, "confidence": route.confidence},
-        "output": output.payload(),
-        "session_id": session["id"],
-        "decision_id": decision_id,
-        "tool_calls": tool_calls,
-    }
+    # Save agent response
     _save_chat_message(
         rt,
         session["id"],
         "agent",
-        output.narrative or output.error or "No response returned.",
+        response.narrative,
     )
-    return response
+
+    output = {
+        "run_id": decision_id,
+        "skill": "unified_chat_agent",
+        "subject": None,
+        "narrative": response.narrative,
+        "provider": "nim",
+        "model": None,
+        "status": "ok",
+        "fallback": False,
+        "created_at": utc_now(),
+        "latency_ms": 0,
+        "cards": [],
+        "checks": {"ok": True},
+        "structured": response.structured,
+    }
+
+    return {
+        "route": {"skill": "unified_chat_agent", "args": {}, "confidence": 1.0},
+        "output": output,
+        "session_id": session["id"],
+        "decision_id": decision_id,
+        "tool_calls": response.tool_calls,
+    }
 
 
 # =============================================================================
