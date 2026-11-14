@@ -24,7 +24,7 @@ import AnalysisDrawer from "../components/AnalysisDrawer";
 import ExecutionDialog from "../components/ExecutionDialog";
 import AgentPanel from "../components/AgentPanel";
 import { useToast } from "../components/Toast";
-import { Badge, Button, EmptyState, Panel, ProgressBar, Spinner } from "../components/ui";
+import { Badge, Button, Panel, ProgressBar, Spinner } from "../components/ui";
 import { AlertIcon, BoltIcon, PlusIcon, RefreshIcon, XIcon } from "../components/icons";
 
 export default function Watchlist() {
@@ -180,10 +180,10 @@ export default function Watchlist() {
                 return (
                   <div
                     key={row.symbol}
-                    className={`group flex items-center gap-2 rounded-lg border px-2.5 py-2 transition-colors ${
+                    className={`group flex items-center gap-2 border-l-2 px-2.5 py-2 transition-colors ${
                       active
-                        ? "border-gold-500/40 bg-gold-500/[0.08]"
-                        : "border-transparent hover:border-line/70 hover:bg-ink-800/50"
+                        ? "border-l-gold-500 bg-gold-500/[0.06]"
+                        : "border-l-transparent hover:bg-ink-850/70"
                     }`}
                   >
                     <button
@@ -192,24 +192,24 @@ export default function Watchlist() {
                     >
                       <div className="flex items-center justify-between">
                         <span
-                          className={`text-[12.5px] font-semibold ${
+                          className={`text-[12px] font-semibold tracking-[0.02em] ${
                             active ? "text-gold-300" : "text-paper"
                           }`}
                         >
                           {row.symbol}
                         </span>
-                        <span className="font-mono text-[11px] text-fog">
+                        <span className="font-mono text-[10px] text-fog">
                           {row.spread_points !== null ? `${row.spread_points.toFixed(0)}p` : "—"}
                         </span>
                       </div>
-                      <div className="mt-0.5 flex items-center justify-between font-mono text-[10.5px] text-fog">
+                      <div className="mt-0.5 flex items-center justify-between font-mono text-[10px] text-text-faint">
                         <span>{row.bid !== null ? price(row.bid, row.digits) : "—"}</span>
                         <span>{row.ask !== null ? price(row.ask, row.digits) : "—"}</span>
                       </div>
                     </button>
                     <button
                       onClick={() => remove(row.symbol)}
-                      className="rounded p-0.5 text-fog/40 opacity-0 transition-opacity hover:text-short group-hover:opacity-100"
+                      className="p-0.5 text-fog/40 opacity-0 transition-opacity hover:text-short group-hover:opacity-100"
                       aria-label={`Remove ${row.symbol}`}
                     >
                       <XIcon className="h-3 w-3" />
@@ -260,34 +260,36 @@ export default function Watchlist() {
                 return (
                   <div
                     key={`${window.event_id}-${window.start}`}
-                    className={`rounded-md border px-2.5 py-1.5 ${
+                    className={`border-l-2 px-2.5 py-1.5 ${
                       rowTone === "short"
-                        ? "border-short/30 bg-short/10"
+                        ? "border-l-short bg-short/[0.06]"
                         : rowTone === "warn"
-                        ? "border-warn/30 bg-warn/10"
-                        : "border-line/60 bg-ink-800/50"
+                          ? "border-l-warn bg-warn/[0.06]"
+                          : "border-l-line/80 bg-ink-850/50"
                     }`}
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span
-                        className={`font-mono text-[10.5px] px-1.5 py-0.5 rounded text-[10px] ${
+                        className={`px-1.5 py-0.5 font-mono text-[9.5px] font-semibold uppercase tracking-[0.06em] ${
                           rowTone === "short"
-                            ? "bg-short/20 text-short"
+                            ? "bg-short/15 text-short"
                             : rowTone === "warn"
-                            ? "bg-warn/20 text-warn"
-                            : "bg-ink-800 text-fog"
+                              ? "bg-warn/15 text-warn"
+                              : "bg-ink-800 text-fog"
                         }`}
                       >
                         {window.currency}
                       </span>
-                      <span className={`font-mono text-[10.5px] ${timeTone}`}>
+                      <span className={`font-mono text-[10px] ${timeTone}`}>
                         {shortTime(window.start)}–{shortTime(window.end)}
                       </span>
                     </div>
-                    <div className="mt-0.5 truncate text-[11px] text-paper/75" title={window.name}>
+                    <div className="mt-1 truncate text-[10.5px] text-paper/75" title={window.name}>
                       {window.name}
                       {isActive && (
-                        <span className="ml-1.5 font-mono text-[9px] text-short">ACTIVE NOW</span>
+                        <span className="ml-1.5 font-mono text-[9px] uppercase tracking-[0.06em] text-short">
+                          active now
+                        </span>
                       )}
                     </div>
                   </div>
@@ -305,55 +307,93 @@ export default function Watchlist() {
 
       {/* Main column: Symbol header + Candles */}
       <div className="min-w-0 space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line/80 bg-ink-850/70 px-4 py-3 shadow-panel">
-          <div className="flex items-center gap-4 min-w-0">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-[18px] font-bold tracking-wide text-paper">
+        {/* Below xl the watchlist rail is hidden, so symbol selection and the
+            add form stay available in a compact strip above the chart. */}
+        <div className="flex flex-wrap items-stretch gap-2 border border-line/80 bg-ink-900 p-2.5 xl:hidden">
+          <label className="flex min-w-[160px] flex-1 items-center gap-2">
+            <span className="eyebrow shrink-0">Symbol</span>
+            <select
+              value={symbol ?? ""}
+              onChange={(event) => chooseSymbol(event.target.value)}
+              className="field min-w-0 flex-1"
+              disabled={symbols.length === 0}
+              aria-label="Select instrument"
+            >
+              {symbols.length === 0 ? <option value="">No symbols</option> : null}
+              {symbols.map((row) => (
+                <option key={row.symbol} value={row.symbol}>
+                  {row.symbol}
+                </option>
+              ))}
+            </select>
+          </label>
+          <form onSubmit={submitSymbol} className="flex min-w-[200px] flex-1 items-center gap-1.5">
+            <span className="eyebrow shrink-0">Add</span>
+            <input
+              value={addValue}
+              onChange={(event) => setAddValue(event.target.value.toUpperCase())}
+              placeholder="EURUSD"
+              className="field min-w-0 flex-1 uppercase"
+              maxLength={32}
+            />
+            <Button
+              type="submit"
+              variant="secondary"
+              size="sm"
+              loading={addSymbol.isPending}
+              disabled={!addValue.trim()}
+            >
+              <PlusIcon className="h-3.5 w-3.5" />
+              Add
+            </Button>
+          </form>
+        </div>
+
+        <div className="border border-line/80 bg-ink-900">
+          {/* Identity + market data, with the primary action kept on the same line. */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
+            <div className="min-w-0 flex-1 basis-[210px]">
+              <div className="flex items-center gap-2.5">
+                <span
+                  data-testid="instrument-symbol"
+                  className="truncate font-mono text-[20px] font-semibold leading-none tracking-[0.02em] text-paper"
+                >
                   {symbol ?? "—"}
                 </span>
-                {selected ? <Badge tone="neutral">{selected.digits} digits</Badge> : null}
+                {selected ? (
+                  <span className="font-mono text-[10px] uppercase tracking-[0.06em] text-text-faint">
+                    {selected.digits} digits
+                  </span>
+                ) : null}
               </div>
-              <div className="mt-0.5 flex items-center gap-3 font-mono text-[11px] text-fog">
-                <span>bid {selected?.bid !== null && selected ? price(selected.bid, selected.digits) : "—"}</span>
-                <span>ask {selected?.ask !== null && selected ? price(selected.ask, selected.digits) : "—"}</span>
+              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[10px] uppercase tracking-[0.04em] text-text-faint">
+                <span>
+                  bid{" "}
+                  <b className="font-medium text-paper">
+                    {selected?.bid !== null && selected ? price(selected.bid, selected.digits) : "—"}
+                  </b>
+                </span>
+                <span>
+                  ask{" "}
+                  <b className="font-medium text-paper">
+                    {selected?.ask !== null && selected ? price(selected.ask, selected.digits) : "—"}
+                  </b>
+                </span>
                 <span>
                   spread{" "}
-                  {selected?.spread_points !== null && selected
-                    ? `${selected.spread_points.toFixed(0)} pts`
-                    : "—"}
+                  <b className="font-medium text-paper">
+                    {selected?.spread_points !== null && selected
+                      ? `${selected.spread_points.toFixed(0)} pts`
+                      : "—"}
+                  </b>
                 </span>
               </div>
             </div>
 
-            <div className="flex items-center gap-0.5 rounded-lg border border-line/70 bg-ink-900/60 p-0.5">
-              {timeframes.map((item) => (
-                <button
-                  key={item}
-                  onClick={() => chooseTimeframe(item)}
-                  className={`rounded-md px-2.5 py-1 text-[11.5px] font-semibold transition-colors ${
-                    tf === item
-                      ? "bg-gold-500/15 text-gold-300"
-                      : "text-fog hover:bg-ink-800 hover:text-paper"
-                  }`}
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {analysis && !drawerOpen ? (
-              <Button variant="ghost" size="sm" onClick={() => setDrawerOpen(true)}>
-                View analysis
-                <Badge tone={analysis.signal.side === "long" ? "long" : analysis.signal.side === "short" ? "short" : "neutral"}>
-                  {analysis.signal.side === "none" ? "no trade" : analysis.signal.side}
-                </Badge>
-              </Button>
-            ) : null}
             <Button
               variant="primary"
+              size="sm"
+              className="ml-auto whitespace-nowrap"
               onClick={analyse}
               loading={start.isPending || running}
               disabled={!symbol || !health.data?.kronos.ready}
@@ -367,33 +407,81 @@ export default function Watchlist() {
               {running ? "Analysing" : "Analyse"}
             </Button>
           </div>
+
+          {/* Timeframe and review live on their own ruled band. */}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-line/50 px-4 py-2">
+            <div className="flex items-center gap-2">
+              <span className="mr-1 text-[9px] font-semibold uppercase tracking-[0.1em] text-text-faint">
+                TF
+              </span>
+              <div className="flex items-center gap-0.5 border border-line/70 bg-ink-950 p-0.5">
+                {timeframes.map((item) => (
+                  <button
+                    key={item}
+                    onClick={() => chooseTimeframe(item)}
+                    className={`px-2 py-1 font-mono text-[10.5px] font-medium transition-colors ${
+                      tf === item
+                        ? "bg-gold-500/15 text-gold-300"
+                        : "text-fog hover:bg-ink-850 hover:text-paper"
+                    }`}
+                  >
+                    {item}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="ml-auto">
+              {analysis && !drawerOpen ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="whitespace-nowrap"
+                  onClick={() => setDrawerOpen(true)}
+                >
+                  View analysis
+                  <Badge
+                    tone={
+                      analysis.signal.side === "long"
+                        ? "long"
+                        : analysis.signal.side === "short"
+                          ? "short"
+                          : "neutral"
+                    }
+                  >
+                    {analysis.signal.side === "none" ? "no trade" : analysis.signal.side}
+                  </Badge>
+                </Button>
+              ) : null}
+            </div>
+          </div>
         </div>
 
         {running && job.data ? (
-          <div className="rounded-lg border border-gold-500/25 bg-gold-500/[0.06] px-4 py-2.5">
-            <div className="mb-1.5 flex items-center justify-between text-[11.5px]">
+          <div className="border border-gold-500/25 border-l-2 border-l-gold-500 bg-gold-500/[0.05] px-4 py-2.5">
+            <div className="mb-1.5 flex items-center justify-between text-[11px]">
               <span className="flex items-center gap-2 text-gold-300">
                 <Spinner className="h-3 w-3" />
                 {job.data.message}
               </span>
-              <span className="font-mono text-gold-300">{job.data.pct}%</span>
+              <span className="font-mono tabular-nums text-gold-300">{job.data.pct}%</span>
             </div>
             <ProgressBar pct={job.data.pct} />
           </div>
         ) : null}
 
         {failed ? (
-          <div className="flex items-start gap-2 rounded-lg border border-short/40 bg-short/10 px-4 py-2.5 text-[12px] text-short">
-            <AlertIcon className="mt-0.5 h-4 w-4 shrink-0" />
+          <div className="flex items-start gap-2 border border-short/35 border-l-2 border-l-short bg-short/[0.06] px-4 py-2.5 text-[11.5px] text-short">
+            <AlertIcon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <div>
-              <div className="font-semibold">Analysis failed</div>
-              <div className="text-short/80">{job.data?.error}</div>
+              <div className="font-semibold uppercase tracking-[0.06em]">Analysis failed</div>
+              <div className="mt-0.5 text-short/80">{job.data?.error}</div>
             </div>
           </div>
         ) : null}
 
         {latestProblem ? (
-          <div className="flex items-center gap-2 rounded-lg border border-warn/35 bg-warn/10 px-4 py-2 text-[11.5px] text-warn">
+          <div className="flex items-center gap-2 border border-warn/30 border-l-2 border-l-warn bg-warn/[0.06] px-4 py-2 text-[11px] text-warn">
             <AlertIcon className="h-3.5 w-3.5" />
             Could not load the stored analysis:{" "}
             {latestProblem instanceof ApiError ? latestProblem.message : String(latestProblem)}
@@ -410,7 +498,7 @@ export default function Watchlist() {
           actions={
             <>
               {analysis ? (
-                <span className="rounded border border-gold-500/30 bg-gold-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-gold-300 mr-2">
+                <span className="mr-2 border border-gold-500/30 bg-gold-500/10 px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.1em] text-gold-300">
                   Forecast overlay
                 </span>
               ) : null}
@@ -427,8 +515,17 @@ export default function Watchlist() {
           }
           bodyClassName="p-2"
         >
-          {bars.isError ? (
-            <div className="px-3 py-10 text-center text-[12px] text-short">
+          {!symbol ? (
+            <div className="flex min-h-[360px] flex-col items-center justify-center px-6 text-center">
+              <div className="eyebrow mb-2">No instrument selected</div>
+              <p className="text-[12.5px] text-paper/80">Add a symbol to begin</p>
+              <p className="mt-1.5 max-w-sm text-[11px] leading-relaxed text-fog">
+                Adding a symbol calls MT5 Market Watch first, then stores the validated contract
+                specification.
+              </p>
+            </div>
+          ) : bars.isError ? (
+            <div className="px-3 py-10 text-center text-[11.5px] text-short">
               Bars unavailable: {bars.error instanceof ApiError ? bars.error.message : "terminal error"}
             </div>
           ) : bars.data ? (
@@ -441,23 +538,16 @@ export default function Watchlist() {
               height={430}
             />
           ) : (
-            <div className="flex items-center justify-center gap-2 py-10 text-[12px] text-fog">
+            <div className="flex min-h-[430px] items-center justify-center gap-2 text-[11.5px] text-fog">
               <Spinner className="h-4 w-4" /> Loading candles…
             </div>
           )}
         </Panel>
 
         {/* AgentPanel for mobile/tablet (stacked below chart) */}
-        <div className="lg:hidden space-y-3">
+        <div className="space-y-3 lg:hidden">
           <AgentPanel />
         </div>
-
-        {!symbol ? (
-          <EmptyState
-            title="Add a symbol to begin"
-            message="Adding a symbol calls MT5 Market Watch first, then stores the validated contract specification."
-          />
-        ) : null}
       </div>
 
       {/* Right column: AgentPanel */}

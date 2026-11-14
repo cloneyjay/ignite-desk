@@ -85,15 +85,15 @@ export default function News() {
                 </option>
               ))}
             </select>
-            <div className="flex items-center gap-1 rounded-md border border-line/70 bg-ink-900/60 p-0.5">
+            <div className="flex items-center gap-px border border-line/70 bg-ink-950/60 p-0.5">
               {CURRENCIES.map((code) => {
                 const active = currencies.includes(code);
                 return (
                   <button
                     key={code}
                     onClick={() => toggleCurrency(code)}
-                    className={`rounded px-1.5 py-1 text-[10.5px] font-semibold transition-colors ${
-                      active ? "bg-gold-500/15 text-gold-300" : "text-fog hover:text-paper"
+                    className={`px-1.5 py-1 font-mono text-[9.5px] font-semibold uppercase tracking-[0.06em] transition-colors ${
+                      active ? "bg-gold-500/15 text-gold-300" : "text-text-faint hover:text-fog"
                     }`}
                   >
                     {code}
@@ -125,7 +125,7 @@ export default function News() {
             {groups.map(([day, events]) => (
               <div key={day}>
                 <div className="sticky top-0 z-10 flex items-center justify-between border-y border-line/60 bg-ink-900/95 px-4 py-1.5 backdrop-blur">
-                  <span className="text-[10.5px] font-semibold uppercase tracking-[0.16em] text-gold-300/90">
+                  <span className="text-micro font-semibold uppercase tracking-[0.12em] text-gold-300/90">
                     {dayLabel(events[0]?.time)}
                   </span>
                   <span className="font-mono text-[10px] text-fog">{events.length} events</span>
@@ -209,7 +209,7 @@ export default function News() {
               {(blackouts.data?.blackouts ?? []).map((window) => (
                 <div
                   key={`${window.event_id}-${window.start}`}
-                  className="rounded-md border border-short/25 bg-short/[0.06] px-2.5 py-1.5"
+                  className="border border-short/25 border-l-2 border-l-short bg-short/[0.06] px-2.5 py-1.5"
                 >
                   <div className="flex items-center justify-between text-[10.5px]">
                     <Badge tone="short">{window.currency}</Badge>
@@ -296,7 +296,7 @@ export default function News() {
           </Panel>
         ) : null}
 
-        <div className="rounded-lg border border-line/50 bg-ink-850/40 px-3 py-2 text-[10.5px] leading-relaxed text-fog/70">
+        <div className="border border-line/50 px-3 py-2 text-[10px] leading-relaxed text-text-faint">
           Blackouts are computed from high-impact USD, EUR, CNH and JPY events. The model never
           decides whether trading is allowed.
         </div>

@@ -84,15 +84,15 @@ export default function Portfolio() {
           title="Equity growth"
           subtitle="Hourly snapshots, local time axis"
           actions={
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-px border border-line/70 p-0.5">
               {RANGES.map((item) => (
                 <button
                   key={item}
                   onClick={() => setRange(item)}
-                  className={`rounded px-2 py-1 text-[11px] font-semibold uppercase tracking-wide transition-colors ${
+                  className={`px-2 py-1 font-mono text-[9.5px] font-semibold uppercase tracking-[0.08em] transition-colors ${
                     range === item
                       ? "bg-gold-500/15 text-gold-300"
-                      : "text-fog hover:bg-ink-800 hover:text-paper"
+                      : "text-text-faint hover:bg-ink-850 hover:text-fog"
                   }`}
                 >
                   {item}
@@ -144,7 +144,7 @@ export default function Portfolio() {
               />
             </div>
           ) : (
-            <div className="py-6 text-center text-[12px] text-fog">
+            <div className="py-6 text-center text-[11px] uppercase tracking-[0.08em] text-text-faint">
               {account.isError ? "Could not read the account." : "Loading account…"}
             </div>
           )}

@@ -65,19 +65,19 @@ export default function AnalysisDrawer({
 
   return (
     <aside
-      className={`fixed right-0 top-[58px] z-50 flex h-[calc(100vh-58px)] transition-all duration-200 ease-out ${
-        isRetracted ? "w-[60px]" : "w-[540px]"
-      } max-w-full animate-slide-in flex-col border-l border-line bg-ink-900/95 shadow-drawer backdrop-blur`}
+      className={`fixed right-0 top-[var(--header-h)] z-50 flex h-[calc(100vh-var(--header-h))] max-w-full animate-slide-in flex-col border-l border-line-strong bg-ink-900/95 shadow-drawer backdrop-blur transition-all duration-200 ease-out ${
+        isRetracted ? "w-[60px]" : "w-[560px]"
+      }`}
       style={{ width: drawerWidth }}
     >
-      {/* Retract handle - always visible on the left edge */}
+      {/* Retract handle — always visible on the left edge */}
       <button
         onClick={() => setIsRetracted(!isRetracted)}
-        className="absolute -left-8 top-1/2 -translate-y-1/2 z-10 flex items-center justify-center w-8 h-8 rounded-r-md border border-line bg-ink-900/95 shadow-lg backdrop-blur transition-transform duration-200 hover:bg-ink-800"
+        className="absolute -left-8 top-1/2 z-10 flex h-8 w-8 -translate-y-1/2 items-center justify-center border border-line bg-ink-900/95 shadow-lg backdrop-blur transition-transform duration-200 hover:bg-ink-800"
         aria-label={isRetracted ? "Expand analysis drawer" : "Retract analysis drawer"}
       >
         {isRetracted ? (
-          <ChevronRightIcon className="h-4 w-4 text-gold-400" />
+          <ChevronRightIcon className="h-4 w-4 text-gold-500" />
         ) : (
           <ChevronLeftIcon className="h-4 w-4 text-fog" />
         )}
@@ -85,19 +85,22 @@ export default function AnalysisDrawer({
 
       <div
         className={`flex-1 overflow-y-auto transition-opacity duration-200 ${
-          isRetracted ? "opacity-0 pointer-events-none" : "opacity-100"
+          isRetracted ? "pointer-events-none opacity-0" : "opacity-100"
         }`}
       >
         <header className="flex items-start justify-between gap-3 border-b border-line/70 px-5 py-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <BoltIcon className="h-4 w-4 text-gold-400" />
-              <h2 className="text-[14px] font-semibold text-paper">
+          <div className="min-w-0">
+            <div className="eyebrow flex items-center gap-2">
+              <BoltIcon className="h-3.5 w-3.5 text-gold-500" />
+              Deterministic analysis
+            </div>
+            <div className="mt-1 flex items-center gap-2">
+              <h2 className="truncate text-[15px] font-semibold leading-none text-paper">
                 {analysis ? `${analysis.symbol} · ${analysis.timeframe}` : "Analysis"}
               </h2>
               {analysis ? <Badge tone="gold">{analysis.signal.version}</Badge> : null}
             </div>
-            <p className="mt-1 text-[11.5px] text-fog">
+            <p className="mt-1.5 text-[11px] leading-snug text-fog">
               {analysis
                 ? `last closed bar ${dateTime(analysis.last_bar_time)} · ${analysis.samples} paths · horizon ${analysis.horizon}`
                 : "Deterministic forecast, no LLM in the numbers."}
@@ -105,10 +108,10 @@ export default function AnalysisDrawer({
           </div>
           <button
             onClick={onClose}
-            className="rounded-md p-1.5 text-fog transition-colors hover:bg-ink-800 hover:text-paper"
+            className="flex h-7 w-7 shrink-0 items-center justify-center border border-line/60 text-fog transition-colors hover:border-line-strong hover:text-paper"
             aria-label="Close analysis"
           >
-            <XIcon className="h-4 w-4" />
+            <XIcon className="h-3.5 w-3.5" />
           </button>
         </header>
 
@@ -150,7 +153,7 @@ export default function AnalysisDrawer({
                   {analysis.signal.reasons.map((reason) => (
                     <div
                       key={reason}
-                      className="flex items-start gap-2 rounded-md border border-line/50 bg-ink-850/50 px-3 py-2 text-[12px] text-paper/80"
+                      className="flex items-start gap-2 border border-line/50 border-l-2 border-l-line bg-ink-950/40 px-3 py-2 text-[11.5px] text-paper/80"
                     >
                       {analysis.signal.side === "none" ? (
                         <AlertIcon className="mt-0.5 h-3 w-3 shrink-0 text-warn" />
@@ -216,13 +219,13 @@ export default function AnalysisDrawer({
         <div className="flex flex-col items-center justify-center h-full gap-4 pt-4 pb-4">
           <div className="relative group">
             <BoltIcon className="h-5 w-5 text-gold-400" />
-            <span className="absolute left-full top-1/2 -translate-y-1/2 ml-2 whitespace-nowrap rounded px-2 py-1 text-[10px] bg-ink-900 border border-line opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all">
+            <span className="absolute left-full top-1/2 ml-2 -translate-y-1/2 whitespace-nowrap border border-line bg-ink-900 px-2 py-1 font-mono text-[9px] uppercase tracking-[0.08em] text-fog opacity-0 invisible transition-all group-hover:visible group-hover:opacity-100">
               Analysis
             </span>
           </div>
           <div className="relative group">
             <BrainIcon className="h-5 w-5 text-gold-400" />
-            <span className="absolute left-full top-1/2 -translate-y-1/2 ml-2 whitespace-nowrap rounded px-2 py-1 text-[10px] bg-ink-900 border border-line opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all">
+            <span className="absolute left-full top-1/2 ml-2 -translate-y-1/2 whitespace-nowrap border border-line bg-ink-900 px-2 py-1 font-mono text-[9px] uppercase tracking-[0.08em] text-fog opacity-0 invisible transition-all group-hover:visible group-hover:opacity-100">
               AI Commentary
             </span>
           </div>
@@ -232,7 +235,7 @@ export default function AnalysisDrawer({
                 <path d="M12 5v14M19 12H5" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </div>
-            <span className="absolute left-full top-1/2 -translate-y-1/2 ml-2 whitespace-nowrap rounded px-2 py-1 text-[10px] bg-ink-900 border border-line opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all">
+            <span className="absolute left-full top-1/2 ml-2 -translate-y-1/2 whitespace-nowrap border border-line bg-ink-900 px-2 py-1 font-mono text-[9px] uppercase tracking-[0.08em] text-fog opacity-0 invisible transition-all group-hover:visible group-hover:opacity-100">
               Execute
             </span>
           </div>
@@ -240,7 +243,7 @@ export default function AnalysisDrawer({
             <svg className="h-5 w-5 text-short" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M6 6l12 12M18 6l-12 12" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
-            <span className="absolute left-full top-1/2 -translate-y-1/2 ml-2 whitespace-nowrap rounded px-2 py-1 text-[10px] bg-ink-900 border border-line opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all">
+            <span className="absolute left-full top-1/2 ml-2 -translate-y-1/2 whitespace-nowrap border border-line bg-ink-900 px-2 py-1 font-mono text-[9px] uppercase tracking-[0.08em] text-fog opacity-0 invisible transition-all group-hover:visible group-hover:opacity-100">
               Close
             </span>
           </div>
@@ -271,8 +274,8 @@ function NarrativePanel({
     return (
       <section>
         <SectionTitle>AI commentary — non-binding</SectionTitle>
-        <div className="rounded-xl border border-line/50 bg-ink-850/40 p-4">
-          <p className="text-[12px] text-fog mb-3">
+        <div className="border border-line/60 bg-ink-950/40 p-4">
+          <p className="mb-3 text-[11.5px] leading-relaxed text-fog">
             The deterministic engine has produced the forecast, signal and draft above.
             This section adds a short desk note written by the LLM — it cannot change any
             number, override a block, or execute a trade.
@@ -295,10 +298,10 @@ function NarrativePanel({
     return (
       <section>
         <SectionTitle>AI commentary — non-binding</SectionTitle>
-        <div className="rounded-xl border border-gold-500/25 bg-gold-500/[0.06] p-4">
+        <div className="border border-gold-500/25 border-l-2 border-l-gold-500 bg-gold-500/[0.05] p-4">
           <div className="flex items-center gap-2">
             <Spinner className="h-4 w-4" />
-            <span className="text-[12px] text-gold-300">
+            <span className="text-[11.5px] text-gold-300">
               {loading ? "Loading commentary…" : "Generating commentary…"}
             </span>
           </div>
@@ -315,11 +318,11 @@ function NarrativePanel({
     return (
       <section>
         <SectionTitle>AI commentary — non-binding</SectionTitle>
-        <div className="rounded-xl border border-line/50 bg-ink-850/40 p-4">
-          <div className="flex items-center justify-between mb-3">
+        <div className="border border-line/60 bg-ink-950/40 p-4">
+          <div className="mb-3 flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <BrainIcon className="h-4 w-4 text-gold-400" />
-              <span className="text-[11px] font-medium text-paper">Commentary</span>
+              <BrainIcon className="h-4 w-4 text-gold-500" />
+              <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-paper">Commentary</span>
               {isFallback && (
                 <Badge tone="warn" className="text-[9px]">
                   Template (model unavailable)
@@ -388,7 +391,7 @@ function NarrativePanel({
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
-    <h3 className="mb-2 text-[10.5px] font-semibold uppercase tracking-[0.16em] text-fog">
+    <h3 className="mb-2 text-micro font-semibold uppercase tracking-[0.14em] text-text-muted">
       {children}
     </h3>
   );
@@ -404,20 +407,20 @@ function SignalHeader({ analysis }: { analysis: Analysis }) {
       : "NO TRADE";
   return (
     <div
-      className={`flex items-center justify-between rounded-xl border px-4 py-3.5 ${
+      className={`flex items-center justify-between border border-l-2 px-4 py-3.5 ${
         tone === "long"
-          ? "border-long/35 bg-long/[0.08]"
+          ? "border-long/30 border-l-long bg-long/[0.06]"
           : tone === "short"
-          ? "border-short/35 bg-short/[0.08]"
-          : "border-line bg-ink-850/60"
+          ? "border-short/30 border-l-short bg-short/[0.06]"
+          : "border-line border-l-line bg-ink-950/50"
       }`}
     >
       <div>
-        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-fog">
+        <div className="text-micro font-semibold uppercase tracking-[0.14em] text-text-muted">
           Signal
         </div>
         <div
-          className={`mt-0.5 font-mono text-[24px] font-bold leading-none ${
+          className={`mt-1 font-mono text-[24px] font-bold leading-none ${
             tone === "long" ? "text-long" : tone === "short" ? "text-short" : "text-paper/70"
           }`}
         >
@@ -425,10 +428,10 @@ function SignalHeader({ analysis }: { analysis: Analysis }) {
         </div>
       </div>
       <div className="text-right">
-        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-fog">
+        <div className="text-micro font-semibold uppercase tracking-[0.14em] text-text-muted">
           Confidence
         </div>
-        <div className="mt-0.5 font-mono text-[18px] tabular-nums text-paper">
+        <div className="mt-1 font-mono text-[18px] tabular-nums text-paper">
           {percent(analysis.signal.p_up, 0)}
         </div>
       </div>
@@ -450,9 +453,9 @@ function Mini({
   const color =
     tone === "long" ? "text-long" : tone === "short" ? "text-short" : "text-paper";
   return (
-    <div className="rounded-lg border border-line/60 bg-ink-850/60 px-3 py-2" title={hint}>
-      <div className="text-[10px] uppercase tracking-[0.12em] text-fog">{label}</div>
-      <div className={`mt-0.5 font-mono text-[13.5px] tabular-nums ${color}`}>{value}</div>
+    <div className="border border-line/60 border-l-2 border-l-line bg-ink-950/50 px-3 py-2" title={hint}>
+      <div className="text-micro uppercase tracking-[0.1em] text-text-faint">{label}</div>
+      <div className={`mt-1 font-mono text-[13px] tabular-nums ${color}`}>{value}</div>
     </div>
   );
 }
@@ -460,9 +463,9 @@ function Mini({
 function RunningPanel({ job }: { job: Job }) {
   return (
     <div className="space-y-4">
-      <div className="rounded-xl border border-gold-500/25 bg-gold-500/[0.06] px-4 py-4">
+      <div className="border border-gold-500/25 border-l-2 border-l-gold-500 bg-gold-500/[0.05] px-4 py-4">
         <div className="mb-2 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-[12.5px] font-semibold text-gold-300">
+          <div className="flex items-center gap-2 text-[12px] font-semibold uppercase tracking-[0.06em] text-gold-300">
             <Spinner className="h-3.5 w-3.5" />
             {job.symbol} · {job.timeframe}
           </div>
@@ -476,7 +479,7 @@ function RunningPanel({ job }: { job: Job }) {
         {job.progress.map((step, index) => (
           <div
             key={`${step.step}-${index}`}
-            className="flex items-center justify-between rounded-md border border-line/40 bg-ink-850/40 px-3 py-1.5 font-mono text-[11px]"
+            className="flex items-center justify-between border-l-2 border-l-line bg-ink-950/40 px-3 py-1.5 font-mono text-[10.5px]"
           >
             <span className="text-fog">{step.step}</span>
             <span className="text-paper/70">{step.message}</span>
@@ -522,9 +525,9 @@ function DraftPanel({
         </span>
       </div>
 
-      <div className="rounded-xl border border-line/70 bg-ink-850/70 p-4">
+      <div className="border border-line/70 bg-ink-950/50 p-4">
         <div className="mb-3 flex items-center justify-between">
-          <Badge tone={draft.side === "long" ? "long" : "short"}>
+          <Badge tone={draft.side === "long" ? "long" : "short"} dot>
             {draft.side} {draft.lots} lots
           </Badge>
           <span className="text-[11px] text-fog">
@@ -544,8 +547,8 @@ function DraftPanel({
         </div>
 
         {draft.blocked ? (
-          <div className="mt-3 flex items-start gap-2 rounded-lg border border-short/40 bg-short/10 px-3 py-2.5 text-[12px] text-short">
-            <AlertIcon className="mt-0.5 h-4 w-4 shrink-0" />
+          <div className="mt-3 flex items-start gap-2 border border-short/30 border-l-2 border-l-short bg-short/[0.06] px-3 py-2.5 text-[11.5px] text-short">
+            <AlertIcon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span>{draft.block_reason ?? "This draft is blocked."}</span>
           </div>
         ) : null}

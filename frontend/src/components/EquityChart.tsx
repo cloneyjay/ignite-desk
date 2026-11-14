@@ -33,36 +33,36 @@ export default function EquityChart({
       autoSize: fill,
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
-        textColor: "#8B9BB0",
+        textColor: "#9a8f83",
         fontFamily: "ui-monospace, Consolas, monospace",
         fontSize: 10,
         attributionLogo: false,
       },
       grid: {
-        vertLines: { color: "rgba(34,48,63,0.35)" },
-        horzLines: { color: "rgba(34,48,63,0.35)" },
+        vertLines: { color: "rgba(120,100,80,0.16)" },
+        horzLines: { color: "rgba(120,100,80,0.16)" },
       },
       rightPriceScale: {
-        borderColor: "#22303F",
+        borderColor: "#3a332c",
         scaleMargins: { top: 0.12, bottom: 0.08 },
       },
       timeScale: {
-        borderColor: "#22303F",
+        borderColor: "#3a332c",
         timeVisible: true,
         secondsVisible: false,
         rightOffset: 2,
       },
       crosshair: {
         mode: CrosshairMode.Normal,
-        vertLine: { color: "rgba(231,188,96,0.35)", labelBackgroundColor: "#B9852A" },
-        horzLine: { color: "rgba(231,188,96,0.35)", labelBackgroundColor: "#B9852A" },
+        vertLine: { color: "rgba(224,178,90,0.35)", labelBackgroundColor: "#8a6420" },
+        horzLine: { color: "rgba(224,178,90,0.35)", labelBackgroundColor: "#8a6420" },
       },
       handleScale: { axisPressedMouseMove: false },
     });
     const series = chart.addAreaSeries({
-      lineColor: "#E7BC60",
-      topColor: "rgba(217,166,60,0.26)",
-      bottomColor: "rgba(217,166,60,0.01)",
+      lineColor: "#e0b25a",
+      topColor: "rgba(200,149,47,0.24)",
+      bottomColor: "rgba(200,149,47,0.01)",
       lineWidth: 2,
       priceLineVisible: false,
       lastValueVisible: true,
@@ -110,7 +110,7 @@ export default function EquityChart({
     >
       <div ref={container} className="h-full w-full" />
       {points.length === 0 ? (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg border border-dashed border-line/70 text-[12px] text-fog">
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center border border-dashed border-line/70 text-[11px] uppercase tracking-[0.08em] text-text-faint">
           Equity snapshots appear after the first account refresh.
         </div>
       ) : null}

@@ -134,7 +134,7 @@ async function main() {
     await sleep(700);
     const canvases = await page.evaluate(() => document.querySelectorAll("canvas").length);
     const title = await page.evaluate(
-      () => document.querySelector(".font-mono.text-\\[18px\\]")?.textContent?.trim() ?? "?",
+      () => document.querySelector('[data-testid="instrument-symbol"]')?.textContent?.trim() ?? "?",
     );
     notes.push(`watchlist: ${canvases} canvas element(s), symbol=${title}`);
     await shot("watchlist");

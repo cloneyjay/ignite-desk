@@ -16,10 +16,10 @@ interface ToastApi {
 const ToastContext = createContext<ToastApi>({ push: () => undefined });
 
 const TONE_STYLE: Record<ToastTone, string> = {
-  info: "border-info/40 bg-info/10 text-info",
-  ok: "border-long/40 bg-long/10 text-long",
-  warn: "border-warn/40 bg-warn/10 text-warn",
-  danger: "border-short/40 bg-short/10 text-short",
+  info: "border-info/30 border-l-info bg-info/[0.07] text-info",
+  ok: "border-long/30 border-l-long bg-long/[0.07] text-long",
+  warn: "border-warn/30 border-l-warn bg-warn/[0.07] text-warn",
+  danger: "border-short/30 border-l-short bg-short/[0.07] text-short",
 };
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
@@ -46,16 +46,16 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={{ push }}>
       {children}
-      <div className="pointer-events-none fixed bottom-5 right-5 z-[80] flex w-[340px] flex-col gap-2">
+      <div className="pointer-events-none fixed bottom-20 right-5 z-[80] flex w-[340px] flex-col gap-2">
         {toasts.map((toast) => (
           <button
             key={toast.id}
             onClick={() => dismiss(toast.id)}
-            className={`pointer-events-auto animate-slide-in rounded-lg border px-4 py-3 text-left shadow-panel backdrop-blur ${TONE_STYLE[toast.tone]}`}
+            className={`pointer-events-auto animate-slide-in border border-l-2 px-4 py-3 text-left shadow-panel backdrop-blur ${TONE_STYLE[toast.tone]}`}
           >
-            <div className="text-[13px] font-semibold tracking-wide">{toast.title}</div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.08em]">{toast.title}</div>
             {toast.message ? (
-              <div className="mt-0.5 text-[12px] leading-snug text-paper/70">
+              <div className="mt-1 text-[11px] leading-snug text-paper/65">
                 {toast.message}
               </div>
             ) : null}

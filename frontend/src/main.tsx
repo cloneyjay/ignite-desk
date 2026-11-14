@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import App from "./App";
 import { ToastProvider } from "./components/Toast";
+import { TweaksProvider, TweaksToggle } from "./components/TweaksPanel";
 import "./index.css";
 
 const queryClient = new QueryClient({
@@ -22,7 +23,10 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <ToastProvider>
-          <App />
+          <TweaksProvider>
+            <App />
+            <TweaksToggle />
+          </TweaksProvider>
         </ToastProvider>
       </BrowserRouter>
     </QueryClientProvider>

@@ -14,8 +14,12 @@ import type { Analysis, Bar, Blackout } from "../lib/types";
 import { shortTime } from "../lib/format";
 
 const TF_MINUTES: Record<string, number> = { M5: 5, M15: 15, M30: 30, H1: 60 };
-const UP = "#3FB950";
-const DOWN = "#F0616D";
+const UP = "#4f9e63";
+const DOWN = "#c45a54";
+const GOLD = "#e0b25a";
+const TEXT = "#9a8f83";
+const GRID = "rgba(120,100,80,0.16)";
+const BORDER = "#3a332c";
 
 interface Forecast {
   times: number[];
@@ -160,11 +164,11 @@ export default function CandleChart({
       const left = Math.max(0, Math.min(x1, x2));
       const right = Math.min(paneWidth, Math.max(x1, x2));
       if (right <= left) continue;
-      ctx.fillStyle = "rgba(240,97,109,0.09)";
+      ctx.fillStyle = "rgba(196,90,84,0.09)";
       ctx.fillRect(left, 0, Math.max(1, right - left), heightPx - 24);
-      ctx.fillStyle = "rgba(240,97,109,0.35)";
+      ctx.fillStyle = "rgba(196,90,84,0.35)";
       ctx.fillRect(left, 0, 1, heightPx - 24);
-      ctx.fillStyle = "rgba(240,97,109,0.18)";
+      ctx.fillStyle = "rgba(196,90,84,0.18)";
       ctx.fillRect(right - 1, 0, 1, heightPx - 24);
     }
 
@@ -193,7 +197,7 @@ export default function CandleChart({
         });
         [...points].reverse().forEach((point) => ctx.lineTo(point.x, point.lo));
         ctx.closePath();
-        ctx.fillStyle = "rgba(231,188,96,0.13)";
+        ctx.fillStyle = "rgba(224,178,90,0.13)";
         ctx.fill();
       }
 
@@ -211,7 +215,7 @@ export default function CandleChart({
         }
       }
       if (started) {
-        ctx.strokeStyle = "rgba(231,188,96,0.95)";
+        ctx.strokeStyle = "rgba(224,178,90,0.95)";
         ctx.lineWidth = 1.5;
         ctx.stroke();
       }
@@ -219,7 +223,7 @@ export default function CandleChart({
       const tail = points[points.length - 1];
       if (tail) {
         const mid = mids[mids.length - 1];
-        ctx.fillStyle = "rgba(231,188,96,0.9)";
+        ctx.fillStyle = "rgba(224,178,90,0.9)";
         ctx.font = "600 10px ui-monospace, Consolas, monospace";
         const label = "KRONOS p10–p90";
         const textWidth = ctx.measureText(label).width;
@@ -237,21 +241,21 @@ export default function CandleChart({
       height,
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
-        textColor: "#8B9BB0",
+        textColor: TEXT,
         fontFamily: "ui-monospace, Consolas, monospace",
         fontSize: 10,
         attributionLogo: false,
       },
       grid: {
-        vertLines: { color: "rgba(34,48,63,0.32)" },
-        horzLines: { color: "rgba(34,48,63,0.32)" },
+        vertLines: { color: GRID },
+        horzLines: { color: GRID },
       },
       rightPriceScale: {
-        borderColor: "#22303F",
+        borderColor: BORDER,
         scaleMargins: { top: 0.08, bottom: 0.1 },
       },
       timeScale: {
-        borderColor: "#22303F",
+        borderColor: BORDER,
         timeVisible: true,
         secondsVisible: false,
         rightOffset: 18,
@@ -259,8 +263,8 @@ export default function CandleChart({
       },
       crosshair: {
         mode: CrosshairMode.Normal,
-        vertLine: { color: "rgba(231,188,96,0.3)", labelBackgroundColor: "#B9852A" },
-        horzLine: { color: "rgba(231,188,96,0.3)", labelBackgroundColor: "#B9852A" },
+        vertLine: { color: "rgba(224,178,90,0.3)", labelBackgroundColor: "#8a6420" },
+        horzLine: { color: "rgba(224,178,90,0.3)", labelBackgroundColor: "#8a6420" },
       },
       localization: {
         priceFormatter: (value: number) =>
@@ -372,7 +376,7 @@ export default function CandleChart({
             {
               time: data[data.length - 1].time,
               position: "aboveBar",
-              color: "#E7BC60",
+              color: GOLD,
               shape: "circle",
               text: "",
             },
@@ -436,7 +440,7 @@ export default function CandleChart({
 
   return (
     <div className="relative">
-      <div className="pointer-events-none absolute left-3 top-2 z-10 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10.5px] text-fog/90">
+      <div className="pointer-events-none absolute left-3 right-16 top-2 z-10 hidden flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10.5px] text-fog/90 sm:flex">
         {legend ? (
           <>
             <span className="text-paper/60">{shortTime(legend.t)}</span>
@@ -445,11 +449,6 @@ export default function CandleChart({
             <span>L <b className={rising ? "text-long" : "text-short"}>{legend.l.toFixed(digits)}</b></span>
             <span>C <b className={rising ? "text-long" : "text-short"}>{legend.c.toFixed(digits)}</b></span>
           </>
-        ) : null}
-        {analysis ? (
-          <span className="rounded border border-gold-500/30 bg-gold-500/10 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.12em] text-gold-300">
-            forecast overlay
-          </span>
         ) : null}
       </div>
       <div ref={container} className="w-full" style={{ height }} />

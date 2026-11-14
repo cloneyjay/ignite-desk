@@ -50,15 +50,15 @@ export default function History() {
       <Panel bodyClassName="p-3">
         <div className="flex flex-wrap items-end gap-2">
           <label className="flex flex-col gap-1">
-            <span className="text-[10px] uppercase tracking-[0.14em] text-fog">From</span>
+            <span className="text-micro font-semibold uppercase tracking-[0.1em] text-text-faint">From</span>
             <input type="date" value={from} onChange={(event) => setFrom(event.target.value)} className="field" />
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-[10px] uppercase tracking-[0.14em] text-fog">To</span>
+            <span className="text-micro font-semibold uppercase tracking-[0.1em] text-text-faint">To</span>
             <input type="date" value={to} onChange={(event) => setTo(event.target.value)} className="field" />
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-[10px] uppercase tracking-[0.14em] text-fog">Symbol</span>
+            <span className="text-micro font-semibold uppercase tracking-[0.1em] text-text-faint">Symbol</span>
             <select value={symbol} onChange={(event) => setSymbol(event.target.value)} className="field min-w-[130px]">
               <option value="">All symbols</option>
               {(symbols.data?.symbols ?? []).map((row) => (
@@ -69,7 +69,7 @@ export default function History() {
             </select>
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-[10px] uppercase tracking-[0.14em] text-fog">Side</span>
+            <span className="text-micro font-semibold uppercase tracking-[0.1em] text-text-faint">Side</span>
             <select value={side} onChange={(event) => setSide(event.target.value)} className="field min-w-[110px]">
               <option value="">All sides</option>
               <option value="buy">Buy</option>
@@ -77,7 +77,7 @@ export default function History() {
             </select>
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-[10px] uppercase tracking-[0.14em] text-fog">Result</span>
+            <span className="text-micro font-semibold uppercase tracking-[0.1em] text-text-faint">Result</span>
             <select value={result} onChange={(event) => setResult(event.target.value)} className="field min-w-[110px]">
               <option value="">All results</option>
               <option value="win">Wins</option>

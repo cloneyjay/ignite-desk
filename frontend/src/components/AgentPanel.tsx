@@ -20,63 +20,45 @@ export default function AgentPanel() {
   const pnlDisplay = dailyPnl !== null && dailyPnl !== undefined ? dailyPnl.toFixed(2) : "—";
   const pnlTone = dailyPnl !== null && dailyPnl !== undefined ? (dailyPnl >= 0 ? "long" : "short") : "neutral";
 
-  // Determine agent status text and tone
   const isConnected = health.data?.terminal?.connected ?? false;
   const serverName = health.data?.terminal?.server ?? "";
   const isDemo = serverName.toLowerCase().includes("demo");
-  const modeLabel = isDemo ? "DEMO" : "LIVE";
+  const modeLabel = isDemo ? "Demo" : "Live";
 
-  let statusText = "OFF";
+  let statusText = "Off";
   let statusTone: "long" | "short" | "warn" | "neutral" = "neutral";
 
   if (status.isLoading) {
-    statusText = "LOADING";
+    statusText = "Loading";
     statusTone = "neutral";
   } else if (enabled) {
     if (isConnected) {
-      statusText = `RUNNING · ${modeLabel}`;
+      statusText = `Running · ${modeLabel}`;
       statusTone = "long";
     } else {
-      statusText = "ERROR";
+      statusText = "Error";
       statusTone = "short";
     }
-  } else {
-    statusText = "OFF";
-    statusTone = "neutral";
   }
-
-  // Daily loss limit progress: pnl / (equity * limit)
-  // We don't have equity here, so show limit percentage as reference
-  const lossLimitPct = dailyLossLimit * 100;
 
   return (
     <Panel
       title="Agent"
-      className="border-line/80 bg-ink-850/70"
-      bodyClassName="p-4 space-y-4"
+      subtitle={`${modeLabel} account · loop control`}
+      actions={<Badge tone={statusTone} dot>{statusText}</Badge>}
+      bodyClassName="p-3 space-y-3"
     >
-      {/* Header: title + status pill */}
-      <div className="flex items-center justify-between">
-        <h3 className="text-[13px] font-semibold uppercase tracking-[0.08em] text-paper">AGENT</h3>
-        <Badge tone={statusTone} className="px-2.5 py-1 text-[11px]">
-          {statusText}
-        </Badge>
-      </div>
-
-      {/* Metrics grid 2x2 */}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 gap-2">
         <MetricTile label="Next cycle" value={nextCycle} />
         <MetricTile label="Decisions today" value={decisions.toString()} />
         <MetricTile label="Positions" value={positions.toString()} />
         <MetricTile label="P&L" value={pnlDisplay} tone={pnlTone} />
       </div>
 
-      {/* Primary control: Disable/Enable */}
       <Button
         variant={enabled ? "danger-outline" : "primary"}
         onClick={() => {
           if (enabled && !isDemo) {
-            // Extra confirmation for LIVE account
             if (!window.confirm("Disable agent on LIVE account? Open positions stay open.")) return;
           } else if (enabled) {
             if (!window.confirm("Disable agent? Open positions stay open.")) return;
@@ -84,19 +66,22 @@ export default function AgentPanel() {
           toggle.mutate(!enabled);
         }}
         disabled={toggle.isPending}
-        className="w-full h-10"
+        className="w-full"
       >
-        {toggle.isPending ? "Working…" : enabled ? "Disable Agent" : "Enable Agent"}
+        {toggle.isPending ? "Working…" : enabled ? "Disable agent" : "Enable agent"}
       </Button>
 
-      {/* Footer: Daily loss limit with progress bar */}
-      <div className="space-y-1.5 pt-2 border-t border-line/60">
-        <p className="text-[12px] text-fog">
-          Daily loss limit: {lossLimitPct.toFixed(0)}% equity
-        </p>
+      <div className="space-y-1.5 border-t border-line/40 pt-2.5">
+        <div className="flex items-center justify-between">
+          <span className="text-[9.5px] font-semibold uppercase tracking-[0.08em] text-text-muted">
+            Daily loss limit
+          </span>
+          <span className="font-mono text-[10px] tabular-nums text-fog">
+            {(dailyLossLimit * 100).toFixed(0)}% equity
+          </span>
+        </div>
         <ProgressBar
-          pct={Math.min(100, Math.max(0, (pnlValue / (10000 * dailyLossLimit)) * 100))}
-          className="h-1.5"
+          pct={Math.min(100, Math.max(0, (pnlValue / (10000 * (dailyLossLimit || 1))) * 100))}
         />
       </div>
     </Panel>
@@ -114,9 +99,11 @@ function MetricTile({
 }) {
   const toneClass = tone === "long" ? "text-long" : tone === "short" ? "text-short" : "text-paper";
   return (
-    <div className="rounded-lg border border-line/60 bg-ink-800/50 p-3">
-      <p className="text-[11px] uppercase tracking-[0.12em] text-fog">{label}</p>
-      <p className={`mt-1 font-mono tabular-nums text-[20px] font-semibold ${toneClass}`}>{value}</p>
+    <div className="border border-line/60 px-2.5 py-2">
+      <p className="text-[9px] font-semibold uppercase tracking-[0.08em] text-text-muted">{label}</p>
+      <p className={`mt-1.5 font-mono text-[17px] font-medium leading-none tabular-nums ${toneClass}`}>
+        {value}
+      </p>
     </div>
   );
 }

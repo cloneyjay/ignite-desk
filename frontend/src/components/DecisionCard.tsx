@@ -1,175 +1,289 @@
-import { ChevronRightIcon, ExternalLinkIcon } from "./icons";
+import { useState } from "react";
+import type { ReactNode } from "react";
+
+import { Badge, Button, Panel } from "../components/ui";
+import { DecisionExplanation } from "../lib/types";
+import {
+  AlertTriangleIcon,
+  BrainIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+  ClockIcon,
+  CopyIcon,
+  ExternalLinkIcon,
+  LinkIcon,
+  MinusIcon,
+  ShieldIcon,
+  TargetIcon,
+  TrendingDownIcon,
+  TrendingUpIcon,
+  XCircleIcon,
+} from "../components/icons";
+
+const actionConfig = {
+  LONG: { tone: "long" as const, icon: TrendingUpIcon, label: "LONG", rule: "border-l-long" },
+  SHORT: { tone: "short" as const, icon: TrendingDownIcon, label: "SHORT", rule: "border-l-short" },
+  NO_TRADE: { tone: "neutral" as const, icon: MinusIcon, label: "NO TRADE", rule: "border-l-line" },
+  WAIT: { tone: "info" as const, icon: ClockIcon, label: "WAIT", rule: "border-l-info" },
+  MONITOR: { tone: "gold" as const, icon: TargetIcon, label: "MONITOR", rule: "border-l-gold-500" },
+  CLOSE: { tone: "short" as const, icon: XCircleIcon, label: "CLOSE", rule: "border-l-short" },
+  MODIFY: { tone: "info" as const, icon: AlertTriangleIcon, label: "MODIFY", rule: "border-l-info" },
+} as const;
 
 interface DecisionCardProps {
-  decision: {
-    action: string;
-    conviction: number;
-    thesis: string;
-    evidence: string[];
-    failed_conditions: string[];
-    entry: { type: "market" | "limit"; price: number };
-    risk: { lots: number; sl: number; tp: number };
-    expected_rr: number;
-    invalidate_if: string[];
-    links: {
-      analysis_id: string | null;
-      draft_id: string | null;
-      decision_id: string;
-    };
-  };
+  decision: DecisionExplanation;
+  compact?: boolean;
+  onAction?: (action: string) => void;
 }
 
-const getActionColor = (action: string) => {
-  switch (action) {
-    case "LONG":
-      return "text-long bg-long/10 border-long/20";
-    case "SHORT":
-      return "text-short bg-short/10 border-short/20";
-    case "NO_TRADE":
-    case "WAIT":
-    case "MONITOR":
-      return "text-short bg-short/10 border-short/20";
-    case "CLOSE":
-    case "MODIFY":
-      return "text-fog bg-ink-800/50 border-line/50";
-    default:
-      return "text-fog bg-ink-800/50 border-line/50";
-  }
-};
-
-const formatNumber = (num: number) => {
-  return num.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-};
-
-export function DecisionCard({ decision }: DecisionCardProps) {
+function Stat({
+  label,
+  value,
+  sub,
+  rule = "border-l-line",
+  icon,
+}: {
+  label: string;
+  value: ReactNode;
+  sub?: ReactNode;
+  rule?: string;
+  icon?: ReactNode;
+}) {
   return (
-    <div className="rounded-lg border border-line/60 bg-ink-800/50 p-3 space-y-3">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <span className={`badge ${getActionColor(decision.action)}`}>
-          {decision.action}
-        </span>
-        <span className="font-mono text-[11px] text-gold-300">
-          Conviction: {(decision.conviction * 100).toFixed(0)}%
-        </span>
+    <div className={`border border-line/60 border-l-2 bg-ink-900/60 px-3 py-2.5 ${rule}`}>
+      <div className="flex items-center gap-1.5 text-micro font-semibold uppercase tracking-[0.1em] text-text-muted">
+        {icon}
+        {label}
       </div>
-
-      {/* Thesis */}
-      <div className="space-y-1">
-        <div className="font-semibold text-fog">Thesis</div>
-        <p className="text-[12px] leading-relaxed text-paper/90">
-          {decision.thesis}
-        </p>
+      <div className="mt-1.5 truncate font-mono text-[17px] leading-none tabular-nums text-paper">
+        {value}
       </div>
+      {sub ? <div className="mt-1.5 truncate text-[10px] text-fog">{sub}</div> : null}
+    </div>
+  );
+}
 
-      {/* Evidence */}
-      {decision.evidence.length > 0 && (
-        <div className="space-y-1">
-          <div className="font-semibold text-fog">Evidence</div>
-          <ul className="ml-4 space-y-0.5 list-disc">
-            {decision.evidence.map((evidence, i) => (
-              <li key={i} className="text-[11px] text-paper/80">
-                {evidence}
-              </li>
-            ))}
-          </ul>
+function EvidenceList({
+  title,
+  items,
+  tone = "neutral",
+}: {
+  title: string;
+  items: string[];
+  tone?: "neutral" | "long" | "short";
+}) {
+  if (items.length === 0) return null;
+  const rule = tone === "long" ? "border-l-long" : tone === "short" ? "border-l-short" : "border-l-gold-500";
+  const dot = tone === "long" ? "bg-long" : tone === "short" ? "bg-short" : "bg-gold-500";
+  return (
+    <div className={`border-l-2 pl-3 ${rule}`}>
+      <div className="text-micro font-semibold uppercase tracking-[0.11em] text-text-muted">
+        {title}
+      </div>
+      <ul className="mt-2 space-y-1.5" role="list">
+        {items.map((item, index) => (
+          <li key={index} className="flex items-start gap-2 text-[11.5px] leading-relaxed text-paper/80">
+            <span className={`mt-[5px] h-1 w-1 shrink-0 ${dot}`} />
+            <span>{item}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+export function DecisionCard({ decision, compact = false, onAction }: DecisionCardProps) {
+  const [expanded, setExpanded] = useState(!compact);
+  const config = actionConfig[decision.action as keyof typeof actionConfig] || actionConfig.NO_TRADE;
+  const ActionIcon = config.icon;
+
+  const expectedRR =
+    decision.expected_rr > 0
+      ? `+${decision.expected_rr.toFixed(1)}R`
+      : `${decision.expected_rr.toFixed(1)}R`;
+  const entryLabel = decision.entry.type === "market" ? "Market" : `${decision.entry.price}`;
+
+  const copyToClipboard = (text: string) => {
+    void navigator.clipboard?.writeText(text);
+  };
+
+  if (compact) {
+    return (
+      <article className={`animate-in border border-line/60 border-l-2 bg-ink-900 ${config.rule}`}>
+        <div className="flex items-center justify-between gap-2 px-3 py-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <Badge tone={config.tone} dot size="sm">
+              <ActionIcon className="h-3 w-3" />
+              {config.label}
+            </Badge>
+            <span className="truncate font-mono text-[10px] tabular-nums text-text-faint">
+              {(decision.confidence_score * 100).toFixed(0)}% · {expectedRR}
+            </span>
+          </div>
+          {onAction ? (
+            <Button
+              variant={config.tone === "long" ? "long" : config.tone === "short" ? "short" : "primary"}
+              size="sm"
+              onClick={() => onAction(decision.action)}
+            >
+              Execute
+            </Button>
+          ) : null}
         </div>
-      )}
 
-      {/* Failed Conditions */}
-      {decision.failed_conditions.length > 0 && (
-        <div className="space-y-1">
-          <div className="font-semibold text-short">Failed Conditions</div>
-          <ul className="ml-4 space-y-0.5 list-disc">
-            {decision.failed_conditions.map((cond, i) => (
-              <li key={i} className="text-[11px] text-short/80">
-                {cond}
-              </li>
-            ))}
-          </ul>
+        {decision.thesis ? (
+          <p className="line-clamp-2 border-t border-line/40 px-3 py-2 text-[11px] leading-relaxed text-paper/75">
+            {decision.thesis}
+          </p>
+        ) : null}
+
+        <div className="grid grid-cols-3 divide-x divide-line/40 border-t border-line/40 font-mono text-[10px]">
+          <div className="px-2.5 py-1.5">
+            <span className="block text-[8.5px] uppercase tracking-[0.1em] text-text-faint">Entry</span>
+            <span className="mt-0.5 block truncate tabular-nums text-paper/85">{entryLabel}</span>
+          </div>
+          <div className="px-2.5 py-1.5">
+            <span className="block text-[8.5px] uppercase tracking-[0.1em] text-text-faint">Risk</span>
+            <span className="mt-0.5 block truncate tabular-nums text-paper/85">
+              {decision.risk.lots} lots
+            </span>
+          </div>
+          <div className="px-2.5 py-1.5">
+            <span className="block text-[8.5px] uppercase tracking-[0.1em] text-text-faint">RR</span>
+            <span className="mt-0.5 block truncate tabular-nums text-gold-300">{expectedRR}</span>
+          </div>
         </div>
-      )}
+      </article>
+    );
+  }
 
-      {/* Entry & Risk */}
-      <div className="grid grid-cols-2 gap-3 pt-2 border-t border-line/60">
-        <div className="space-y-1">
-          <div className="font-semibold text-fog">Entry</div>
-          <div className="text-[11px] text-paper/90">
-            {decision.entry.type === "market" ? (
-              "Market order"
+  return (
+    <Panel
+      title="Trade decision"
+      subtitle={`Confidence ${(decision.confidence_score * 100).toFixed(0)}%`}
+      className="animate-in"
+      bodyClassName="space-y-4 p-4"
+      actions={
+        <>
+          <Button variant="ghost" size="sm" onClick={() => setExpanded(!expanded)}>
+            {expanded ? (
+              <ChevronUpIcon className="h-3.5 w-3.5" />
             ) : (
-              <>
-                Limit @ {formatNumber(decision.entry.price)}
-              </>
+              <ChevronDownIcon className="h-3.5 w-3.5" />
             )}
-          </div>
-        </div>
-        <div className="space-y-1">
-          <div className="font-semibold text-fog">Risk</div>
-          <div className="text-[11px] text-paper/90 font-mono">
-            {formatNumber(decision.risk.lots)} lots • SL: {formatNumber(decision.risk.sl)} • TP: {formatNumber(decision.risk.tp)}
-          </div>
-        </div>
-        <div className="space-y-1">
-          <div className="font-semibold text-fog">Expected RR</div>
-          <div className="text-[11px] text-paper/90 font-mono">
-            {decision.expected_rr.toFixed(2)}R
-          </div>
-        </div>
-        <div className="space-y-1">
-          <div className="font-semibold text-fog">Conviction</div>
-          <div className="text-[11px] text-paper/90 font-mono">
-            {(decision.conviction * 100).toFixed(0)}%
-          </div>
+          </Button>
+          {onAction ? (
+            <Button
+              variant={config.tone === "long" ? "long" : config.tone === "short" ? "short" : "primary"}
+              size="sm"
+              onClick={() => onAction(decision.action)}
+            >
+              Execute {config.label}
+            </Button>
+          ) : null}
+        </>
+      }
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <Badge tone={config.tone} dot size="lg">
+            <ActionIcon className="h-3.5 w-3.5" />
+            {config.label}
+          </Badge>
+          <span className="font-mono text-[11px] tabular-nums text-fog">
+            expected {expectedRR} · {decision.risk.lots} lots
+          </span>
         </div>
       </div>
 
-      {/* Invalidate If */}
-      {decision.invalidate_if.length > 0 && (
-        <div className="space-y-1">
-          <div className="font-semibold text-short">Invalidate If</div>
-          <ul className="ml-4 space-y-0.5 list-disc">
-            {decision.invalidate_if.map((cond, i) => (
-              <li key={i} className="text-[11px] text-short/80">
-                {cond}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+        <Stat label="Conviction" value={`${(decision.conviction * 100).toFixed(0)}%`} rule="border-l-gold-500" />
+        <Stat label="Expected RR" value={expectedRR} rule={config.rule} />
+        <Stat
+          label="Entry"
+          value={decision.entry.type === "market" ? "Market" : decision.entry.price}
+          sub={decision.entry.type === "market" ? "immediate" : "limit"}
+          rule="border-l-gold-500"
+        />
+        <Stat
+          label="Risk"
+          value={`${decision.risk.lots} lots`}
+          sub={`SL ${decision.risk.sl} · TP ${decision.risk.tp}`}
+          rule="border-l-line"
+          icon={<ShieldIcon className="h-3 w-3" />}
+        />
+      </div>
 
-      {/* Links */}
-      <div className="flex flex-wrap gap-2 pt-2 border-t border-line/60">
-        {decision.links.analysis_id && (
+      {expanded ? (
+        <>
+          <div className="border-t border-line/50 pt-4">
+            <div className="mb-2 flex items-center gap-1.5 text-micro font-semibold uppercase tracking-[0.11em] text-text-muted">
+              <BrainIcon className="h-3.5 w-3.5 text-gold-500" />
+              Thesis
+            </div>
+            <p className="whitespace-pre-wrap text-[12.5px] leading-relaxed text-paper/85">
+              {decision.thesis}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 border-t border-line/50 pt-4 lg:grid-cols-2">
+            <EvidenceList title="Supporting evidence" items={decision.evidence} tone="long" />
+            <EvidenceList
+              title="Invalidation conditions"
+              items={decision.invalidate_if}
+              tone="short"
+            />
+          </div>
+
+          {decision.counterfactuals.length > 0 ? (
+            <div className="border-t border-line/50 pt-4">
+              <EvidenceList
+                title="Counterfactuals"
+                items={decision.counterfactuals}
+                tone="neutral"
+              />
+            </div>
+          ) : null}
+        </>
+      ) : null}
+
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line/50 pt-3">
+        <div className="flex items-center gap-1.5 font-mono text-[10px] text-text-faint">
+          <LinkIcon className="h-3 w-3" />
+          {decision.links.decision_id.slice(0, 12) || "unlinked"}
+          {decision.links.decision_id ? (
+            <button
+              onClick={() => copyToClipboard(decision.links.decision_id)}
+              className="p-0.5 transition-colors hover:text-gold-300"
+              aria-label="Copy decision id"
+            >
+              <CopyIcon className="h-3 w-3" />
+            </button>
+          ) : null}
+        </div>
+        {decision.links.analysis_id ? (
           <a
             href={`#/analysis/${decision.links.analysis_id}`}
-            className="flex items-center gap-1 text-[11px] text-gold-300 hover:text-gold-200"
             target="_blank"
             rel="noopener noreferrer"
+            className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.08em] text-gold-400 transition-colors hover:text-gold-300"
           >
             <ExternalLinkIcon className="h-3 w-3" />
-            Analysis: {decision.links.analysis_id.slice(0, 8)}...
+            Analysis
           </a>
-        )}
-        {decision.links.draft_id && (
+        ) : null}
+        {decision.links.draft_id ? (
           <a
             href={`#/drafts/${decision.links.draft_id}`}
-            className="flex items-center gap-1 text-[11px] text-gold-300 hover:text-gold-200"
             target="_blank"
             rel="noopener noreferrer"
+            className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.08em] text-gold-400 transition-colors hover:text-gold-300"
           >
             <ExternalLinkIcon className="h-3 w-3" />
-            Draft: {decision.links.draft_id.slice(0, 8)}...
+            Draft
           </a>
-        )}
-        <span className="flex items-center gap-1 text-[11px] text-fog font-mono">
-          <ChevronRightIcon className="h-2.5 w-2.5" />
-          Decision: {decision.links.decision_id.slice(0, 8)}...
-        </span>
+        ) : null}
       </div>
-    </div>
+    </Panel>
   );
 }
