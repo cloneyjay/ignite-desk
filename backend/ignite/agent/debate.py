@@ -32,6 +32,8 @@ from backend.ignite.agent.intelligence.risk_intel import RiskIntel
 from backend.ignite.agent.intelligence.market_intel import MarketIntel
 from backend.ignite.agent.reasoning.planner import Planner
 from backend.ignite.agent.reasoning.reflector import Reflector
+from backend.ignite.agent.memory.episodic import EpisodicMemory
+from backend.ignite.agent.memory.semantic import SemanticMemory
 from backend.ignite.services.runtime import Runtime
 
 
@@ -122,6 +124,8 @@ class DebateEngine:
         self.market_intel = MarketIntel(rt)
         self.planner = Planner(rt)
         self.reflector = Reflector(rt)
+        self.episodic = EpisodicMemory(rt)
+        self.semantic = SemanticMemory(rt)
 
     def debate(
         self,
@@ -317,6 +321,45 @@ class DebateEngine:
                 reasons.append("trending regime — slight conviction boost")
         except Exception:  # noqa: BLE001
             regime = None
+
+        # Episodic memory: query past similar setups
+        try:
+            past_episodes = self.episodic.query(
+                symbol=context.symbol,
+                type="decision",
+                limit=5,
+            )
+            if past_episodes:
+                similar_outcomes = [
+                    e for e in past_episodes
+                    if e.get("payload", {}).get("side") == researcher.kronos_signal.side
+                ]
+                if similar_outcomes:
+                    avg_pnl = sum(
+                        float(e.get("payload", {}).get("pnl", 0))
+                        for e in similar_outcomes
+                    ) / len(similar_outcomes)
+                    conviction = min(1.0, conviction + 0.05)
+                    reasons.append(
+                        f"{len(similar_outcomes)} similar past setups, avg PnL {avg_pnl:.2f}"
+                    )
+                else:
+                    reasons.append("no similar past setups found")
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Semantic memory: recall learned patterns for this regime
+        try:
+            patterns = self.semantic.recall(
+                query=f"{context.symbol} {context.timeframe} {regime.regime if regime else 'unknown'}",
+                tags=["pattern", context.symbol, context.timeframe],
+                limit=5,
+            )
+            if patterns:
+                for pattern in patterns[:3]:
+                    reasons.append(f"pattern: {pattern.get('key', '')[:60]}")
+        except Exception:  # noqa: BLE001
+            pass
 
         # Trend cross-check (legacy context.trend as fallback)
         if context.trend == "up" and kronos_signal.side == "long":
