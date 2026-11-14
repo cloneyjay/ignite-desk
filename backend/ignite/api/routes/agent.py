@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
 import json
+import re
 import uuid
 from dataclasses import replace
 from typing import Any
@@ -689,7 +690,68 @@ def _fallback_deterministic(rt: Runtime, text: str) -> ChatResponse:
     text_lower = text.lower()
     tool_calls: list[dict[str, Any]] = []
 
-    if any(w in text_lower for w in ("position", "open trade", "open position")):
+    # Market brief / price action request
+    if any(w in text_lower for w in ("brief", "price action", "anticipate", "outlook", "what to expect")):
+        symbol = "XAUUSD"
+        # Extract any symbol mentioned (forex/crypto patterns like XAUUSD, EURUSD)
+        sym_match = re.search(r"\b(XAUUSD|XAGUSD|[A-Z]{3}USD)\b", text.upper())
+        if not sym_match and any(w in text_lower for w in ("gold", "xau")):
+            symbol = "XAUUSD"
+        elif sym_match:
+            symbol = sym_match.group(1)
+
+        try:
+            bid, ask = rt.quote(symbol)
+            spread = rt.spread(symbol)
+            frame = fetch_bars(rt.mcp, rt.clock(), symbol, "M15", 120)
+            structure = compute_structure(frame)
+            now = datetime.now(timezone.utc)
+            calendar_events = rt.news.calendar(
+                now - timedelta(hours=2), now + timedelta(hours=24)
+            )
+            high_impact = [
+                e for e in calendar_events
+                if str(e.get("importance", "")).lower() == "high"
+            ]
+
+            tool_calls.append(
+                {
+                    "name": "market.structure",
+                    "arguments": {"symbol": symbol, "timeframe": "M15"},
+                    "result": structure,
+                }
+            )
+            tool_calls.append(
+                {
+                    "name": "market.quote",
+                    "arguments": {"symbol": symbol},
+                    "result": {"symbol": symbol, "bid": bid, "ask": ask, "spread_points": spread},
+                }
+            )
+
+            parts = [
+                f"{symbol} M15 brief (live data, model unreachable):",
+                f"Live quote: bid {bid:.2f}, ask {ask:.2f}, spread {spread:.0f} pts.",
+                f"Trend: {structure['trend']}, last close {structure['last_close']:.2f}.",
+                f"EMA20 {structure['ema_fast']:.2f} vs EMA50 {structure['ema_slow']:.2f}; "
+                f"ATR14 {structure['atr']:.2f}; price is {structure['price_vs_vwap']} VWAP.",
+            ]
+            if high_impact:
+                names = ", ".join(e.get("name", "event") for e in high_impact[:3])
+                parts.append(f"High-impact news ahead: {names}.")
+            parts.append(
+                "The model is unreachable, so this is a deterministic read only — "
+                "not a trade recommendation. Re-ask when the model is back for a "
+                "Kronos forecast and a full analysis."
+            )
+            narrative = " ".join(parts)
+        except Exception as exc:  # noqa: BLE001
+            narrative = (
+                "I couldn't pull live market data either. "
+                f"MT5 or the data feed may be down: {exc}."
+            )
+
+    elif any(w in text_lower for w in ("position", "open trade", "open position")):
         positions = rt.positions()
         tool_calls.append(
             {
@@ -728,7 +790,8 @@ def _fallback_deterministic(rt: Runtime, text: str) -> ChatResponse:
     else:
         narrative = (
             "I'm having trouble reaching the model right now. "
-            "Try asking about your positions, risk, or account."
+            "Try asking about your positions, risk, account, or a market brief "
+            "(e.g. “brief me on XAUUSD price action”)."
         )
 
     return ChatResponse(narrative=narrative, tool_calls=tool_calls, structured={})

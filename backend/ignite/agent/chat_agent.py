@@ -63,6 +63,56 @@ class UnifiedChatAgent:
         self, session_id: str, text: str, history: list[dict[str, Any]]
     ) -> ChatResponse:
         """Handle one chat turn: LLM with tools, delegating to Analyst/ExecutionDesk."""
+
+        # Detect market research / brief intent and route to Analyst directly
+        # so the agent gathers live data instead of chatting from knowledge.
+        analysis_intent = self._detect_analysis_intent(text)
+        if analysis_intent:
+            symbol, timeframe = analysis_intent
+            try:
+                result = self.analyst.assess(symbol, timeframe)
+                structured = {
+                    "kind": "analysis",
+                    "symbol": result.symbol,
+                    "timeframe": result.timeframe,
+                    "signal": result.signal,
+                    "p_up": result.p_up,
+                    "edge_atr": result.edge_atr,
+                    "draft_id": result.draft_id,
+                    "rationale": result.rationale,
+                }
+                narrative = (
+                    f"{result.rationale}\n\n"
+                    f"Live quote: bid {result.data.get('quote', {}).get('bid', 'n/a')}, "
+                    f"ask {result.data.get('quote', {}).get('ask', 'n/a')}, "
+                    f"spread {result.data.get('quote', {}).get('spread', 'n/a')} pts.\n"
+                    f"Trend: {result.data.get('structure', {}).get('trend', 'n/a')}, "
+                    f"ATR {result.data.get('structure', {}).get('atr', 'n/a'):.2f}."
+                )
+                tool_call_records = [
+                    {
+                        "name": "analyst.assess",
+                        "arguments": {"symbol": symbol, "timeframe": timeframe},
+                        "result": {
+                            "symbol": result.symbol,
+                            "timeframe": result.timeframe,
+                            "signal": result.signal,
+                            "p_up": result.p_up,
+                            "edge_atr": result.edge_atr,
+                            "draft_id": result.draft_id,
+                            "rationale": result.rationale,
+                        },
+                    }
+                ]
+                return ChatResponse(
+                    narrative=narrative,
+                    tool_calls=tool_call_records,
+                    structured=structured,
+                )
+            except Exception as exc:  # noqa: BLE001
+                # Fall through to LLM conversation if analysis fails
+                pass
+
         messages = self._build_messages(session_id, text, history)
         tools = self._get_tools()
         openai_tools = [t.to_openai() for t in tools]
@@ -114,6 +164,41 @@ class UnifiedChatAgent:
         )
 
     # ------------------------------------------------------------------ tools
+
+    def _detect_analysis_intent(
+        self, text: str
+    ) -> tuple[str, str] | None:
+        """Detect market research / brief / price-action requests.
+
+        Returns (symbol, timeframe) when the user is asking for live market
+        analysis rather than a general conversation.
+        """
+        import re
+
+        text_lower = text.lower()
+        triggers = [
+            "brief", "price action", "anticipate", "outlook", "what to expect",
+            "what should i expect", "research", "analyze", "analyse",
+            "market read", "setup", "signal",
+        ]
+        if not any(w in text_lower for w in triggers):
+            return None
+
+        # Extract symbol (default XAUUSD). Match forex/crypto patterns like
+        # XAUUSD, EURUSD, GBPUSD, BTCUSD, or gold/xau mentions.
+        sym_match = re.search(r"\b(XAUUSD|XAGUSD|[A-Z]{3}USD)\b", text.upper())
+        if not sym_match and any(w in text_lower for w in ("gold", "xau")):
+            symbol = "XAUUSD"
+        elif sym_match:
+            symbol = sym_match.group(1)
+        else:
+            symbol = "XAUUSD"
+
+        # Extract timeframe (default M15)
+        tf_match = re.search(r"\b(M5|M15|M30|H1)\b", text.upper())
+        timeframe = tf_match.group(1) if tf_match else "M15"
+
+        return (symbol, timeframe)
 
     def _get_tools(self) -> list[ToolSpec]:
         """Available tools: MCP registry tools plus analyst/execution delegation."""
