@@ -12,6 +12,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+import pandas as pd
+
 from backend.ignite.agent.analyst import Analyst, AnalystResult
 from backend.ignite.agent.execution_desk import ExecutionDesk, ExecutionResult
 from backend.ignite.agent.session import SessionGuard, SessionState
@@ -106,6 +108,9 @@ class DeskRouter:
 
         if route.intent == "strategy_backtest":
             return self._handle_strategy_backtest(route)
+
+        if route.intent == "strategy_debate":
+            return self._handle_strategy_debate(route)
 
         if route.intent == "strategy_list":
             return self._handle_strategy_list(route)
@@ -310,6 +315,20 @@ class DeskRouter:
             return DeskRoute(
                 intent="strategy_backtest",
                 symbol=sym_match.group(1) if sym_match else None,
+                confidence=0.9,
+            )
+
+        # Strategy debate (Kronos + multi-agent)
+        debate_triggers = [
+            r"\b(?:debate|discuss|deliberate|decide)\s+(?:trade|strategy|setup)\b",
+            r"\b(?:should\s+i\s+)?(?:buy|sell|trade)\s+(?:now|today|this\s+week)\b",
+            r"\b(?:is\s+it\s+a\s+good\s+time|should\s+we\s+enter)\b",
+        ]
+        if any(re.search(p, text_lower) for p in debate_triggers):
+            sym_match = re.search(r"\b(XAUUSD|XAGUSD|[A-Z]{3}USD)\b", text.upper())
+            return DeskRoute(
+                intent="strategy_debate",
+                symbol=sym_match.group(1) if sym_match else "XAUUSD",
                 confidence=0.9,
             )
 
@@ -1429,3 +1448,178 @@ class DeskRouter:
             )
             return text[idx:].strip()
         return ""
+
+    def _handle_strategy_debate(self, route: DeskRoute) -> DeskResponse:
+        """Run the full multi-agent debate: Kronos → Researcher → Strategist → Risk Manager → Executor."""
+        symbol = route.symbol or "XAUUSD"
+        timeframe = route.timeframe or "M15"
+
+        # ---- Step 1: Get live market data ----
+        try:
+            bid, ask = self.rt.quote(symbol)
+            spec = self.rt.spec(symbol)
+            spread = self.rt.spread(symbol)
+        except Exception as exc:  # noqa: BLE001
+            return DeskResponse(
+                narrative=f"Cannot get live quote for {symbol}: {exc}.",
+                tool_calls=[],
+                structured={"kind": "strategy_debate", "error": str(exc)},
+                route=route,
+            )
+
+        # ---- Step 2: Get bars and run Kronos forecast ----
+        try:
+            from backend.ignite.market.bars import fetch_bars
+            clock = self.rt.clock()
+            bars = fetch_bars(self.rt.mcp, clock, symbol, timeframe, 288)
+            future = self._future_timestamps(bars["time"].iloc[-1], timeframe, 12)
+            forecast_client = self.rt.forecast
+            paths, stamps, meta = forecast_client.forecast(
+                bars, future, samples=25, lookback=288
+            )
+        except Exception as exc:  # noqa: BLE001
+            return DeskResponse(
+                narrative=(
+                    f"Cannot run Kronos forecast for {symbol} {timeframe}: {exc}. "
+                    "Check MT5 and Kronos worker connectivity."
+                ),
+                tool_calls=[],
+                structured={"kind": "strategy_debate", "error": str(exc)},
+                route=route,
+            )
+
+        last_close = float(bars["close"].iloc[-1])
+        atr = self._compute_atr(bars)
+
+        # ---- Step 3: Build debate context ----
+        from backend.ignite.agent.debate import DebateContext
+
+        # Get account/daily PnL for risk context
+        try:
+            account = self.rt.account_payload()
+            equity = float(account.get("equity") or 0.0)
+            daily_pnl = float(account.get("profit") or 0.0)
+        except Exception:  # noqa: BLE001
+            equity = 10000.0
+            daily_pnl = 0.0
+
+        daily_loss_limit = equity * 0.06  # 6% default
+        positions = self.rt.positions(symbol)
+        open_positions = len(positions)
+
+        context = DebateContext(
+            symbol=symbol,
+            timeframe=timeframe,
+            paths=paths,
+            last_close=last_close,
+            atr=atr,
+            equity=equity,
+            daily_pnl=daily_pnl,
+            daily_loss_limit=daily_loss_limit,
+            kill_switch=self.rt.kill_switch(),
+            open_positions=open_positions,
+            max_positions=5,
+            spread_points=spread,
+            max_spread_points=50.0,
+            news_blackout=False,
+            trend=self._detect_trend(bars),
+            calendar_high_impact=False,
+        )
+
+        # ---- Step 4: Run the debate ----
+        from backend.ignite.agent.debate import DebateEngine
+
+        engine = DebateEngine(self.rt)
+        decision = engine.debate(symbol, timeframe, paths, last_close, atr, context)
+
+        # ---- Step 5: Build response ----
+        tool_calls = [
+            {
+                "name": "market.quote",
+                "arguments": {"symbol": symbol},
+                "result": {"bid": bid, "ask": ask, "spread": spread},
+            },
+            {
+                "name": "forecast.run",
+                "arguments": {
+                    "symbol": symbol,
+                    "timeframe": timeframe,
+                    "samples": 25,
+                    "lookback": 288,
+                },
+                "result": {
+                    "p_up": decision.debate_trace and "Kronos" in str(
+                        decision.debate_trace
+                    ),
+                },
+            },
+        ]
+
+        return DeskResponse(
+            narrative=decision.narrative,
+            tool_calls=tool_calls,
+            structured={
+                "kind": "strategy_debate",
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "action": decision.action,
+                "side": decision.side,
+                "lots": decision.lots,
+                "entry": decision.entry,
+                "sl": decision.sl,
+                "tp": decision.tp,
+                "debate_trace": list(decision.debate_trace),
+            },
+            route=route,
+        )
+
+    def _future_timestamps(
+        self, last_time: pd.Timestamp, timeframe: str, horizon: int
+    ) -> list[pd.Timestamp]:
+        """Generate future bar timestamps."""
+        minutes = {"M5": 5, "M15": 15, "M30": 30, "H1": 60}.get(timeframe, 15)
+        import pandas as pd
+
+        out: list[pd.Timestamp] = []
+        current = pd.Timestamp(last_time)
+        while len(out) < horizon:
+            current = current + pd.Timedelta(minutes=minutes)
+            if current.day_of_week < 5:  # skip weekends
+                out.append(current)
+        return out
+
+    def _compute_atr(self, bars: pd.DataFrame) -> float:
+        """Simple ATR computation (14-period)."""
+        import pandas as pd
+
+        if len(bars) < 15:
+            return float(bars["close"].std() * 0.5) if len(bars) > 1 else 1.0
+        high = bars["high"].astype(float)
+        low = bars["low"].astype(float)
+        close = bars["close"].astype(float)
+        prev_close = close.shift(1)
+        tr = pd.concat(
+            [
+                high - low,
+                (high - prev_close).abs(),
+                (low - prev_close).abs(),
+            ],
+            axis=1,
+        ).max(axis=1)
+        atr = float(tr.rolling(14).mean().iloc[-1])
+        return atr if atr > 0 else 1.0
+
+    def _detect_trend(self, bars: pd.DataFrame) -> str:
+        """Simple trend detection from EMA crossover."""
+        import pandas as pd
+
+        close = bars["close"].astype(float)
+        if len(close) < 50:
+            return "choppy"
+        ema_fast = close.ewm(span=20, adjust=False).mean()
+        ema_slow = close.ewm(span=50, adjust=False).mean()
+        if ema_fast.iloc[-1] > ema_slow.iloc[-1]:
+            return "up"
+        elif ema_fast.iloc[-1] < ema_slow.iloc[-1]:
+            return "down"
+        return "choppy"
