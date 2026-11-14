@@ -101,6 +101,18 @@ class DeskRouter:
         if route.intent == "manage":
             return self._handle_manage(route)
 
+        if route.intent == "strategy_develop":
+            return self._handle_strategy_develop(route, text)
+
+        if route.intent == "strategy_backtest":
+            return self._handle_strategy_backtest(route)
+
+        if route.intent == "strategy_list":
+            return self._handle_strategy_list(route)
+
+        if route.intent == "strategy_get":
+            return self._handle_strategy_get(route)
+
         # Default: conversational chat via UnifiedChatAgent
         return self._handle_chat(text, history, route)
 
@@ -271,6 +283,46 @@ class DeskRouter:
         ]
         if any(re.search(p, text_lower) for p in execute_triggers):
             return DeskRoute(intent="execute", confidence=0.9)
+
+        # Strategy development: create an EA from natural language
+        strategy_develop_triggers = [
+            r"\b(?:create|write|build|develop|code|program)\s+(?:an\s+)?(?:ea|expert advisor|strategy|trading system|bot)\b",
+            r"\b(?:ea|expert advisor|strategy)\s+(?:that|for|to)\s+(?:buy|sell|trade|enter|exit)\b",
+            r"\bstrategy\s+(?:that|for|to)\s+(?:buy|sell|trade|enter|exit)\b",
+        ]
+        if any(re.search(p, text_lower) for p in strategy_develop_triggers):
+            sym_match = re.search(r"\b(XAUUSD|XAGUSD|[A-Z]{3}USD)\b", text.upper())
+            tf_match = re.search(r"\b(M5|M15|M30|H1)\b", text.upper())
+            return DeskRoute(
+                intent="strategy_develop",
+                symbol=sym_match.group(1) if sym_match else "XAUUSD",
+                timeframe=tf_match.group(1) if tf_match else "M15",
+                confidence=0.9,
+            )
+
+        # Strategy backtest
+        backtest_triggers = [
+            r"\b(?:backtest|back.test|run\s+test|test\s+strategy)\b",
+            r"\b(?:optimize|optimise)\s+strategy\b",
+        ]
+        if any(re.search(p, text_lower) for p in backtest_triggers):
+            sym_match = re.search(r"\b(XAUUSD|XAGUSD|[A-Z]{3}USD)\b", text.upper())
+            return DeskRoute(
+                intent="strategy_backtest",
+                symbol=sym_match.group(1) if sym_match else None,
+                confidence=0.9,
+            )
+
+        # Strategy list / get
+        strategy_list_triggers = [
+            r"\b(?:show|list|my)\s+strategies?\b",
+            r"\b(?:get|show|read)\s+strategy\b",
+        ]
+        if any(re.search(p, text_lower) for p in strategy_list_triggers):
+            return DeskRoute(
+                intent="strategy_list",
+                confidence=0.9,
+            )
 
         # Default to chat
         return DeskRoute(intent="chat", confidence=0.5)
@@ -1039,3 +1091,341 @@ class DeskRouter:
             structured=response.structured,
             route=route,
         )
+
+    # ------------------------------------------------------------------ strategy handlers
+
+    def _handle_strategy_develop(
+        self, route: DeskRoute, text: str
+    ) -> DeskResponse:
+        """Create a new MQL5 strategy from natural language."""
+        symbol = route.symbol or "XAUUSD"
+        timeframe = route.timeframe or "M15"
+
+        # Generate MQL5 code via the LLM
+        from backend.ignite.agent.chat_agent import SYSTEM_PROMPT
+
+        mql_prompt = f"""Write a complete MQL5 Expert Advisor for {symbol} on {timeframe} timeframe.
+
+        User request: {text}
+
+        The EA should:
+        1. Include #property copyright and #property link
+        2. Define input parameters for lots, stop loss, take profit
+        3. Implement OnInit, OnDeinit, OnTick
+        4. Use iMA/iRSI/iMACD or price action for signals
+        5. Place trades with OrderSend using proper SL/TP
+        6. Manage existing positions (close opposite, trail stop)
+        7. Include error handling and logging
+
+        Output ONLY the MQL5 code in a single code block, no explanations."""
+
+        try:
+            llm_result = self.rt.llm.complete(
+                [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": mql_prompt},
+                ],
+                tools=None,
+                tool_choice=None,
+                timeout_s=60.0,
+            )
+            raw_text = llm_result.text or ""
+        except Exception as exc:  # noqa: BLE001
+            return DeskResponse(
+                narrative=(
+                    f"I couldn't generate MQL5 code for {symbol} {timeframe}: {exc}. "
+                    "The LLM provider may be unreachable."
+                ),
+                tool_calls=[],
+                structured={"kind": "strategy_develop", "error": str(exc)},
+                route=route,
+            )
+
+        # Extract code block from LLM response
+        mql5_code = self._extract_mql5_code(raw_text)
+        if not mql5_code:
+            mql5_code = raw_text  # fallback: use raw text
+
+        # Extract strategy name from user request
+        name_match = re.search(
+            r'(?:called|named|call it)\s+["\']?([\w\s]+?)["\']?[,.]?\s*(?:that|for|on|$)',
+            text,
+            re.IGNORECASE,
+        )
+        strategy_name = (
+            name_match.group(1).strip()
+            if name_match
+            else f"{symbol} {timeframe} Strategy"
+        )
+
+        # Save strategy via StrategyManager
+        from backend.ignite.agent.strategy import StrategyManager
+
+        mgr = StrategyManager(self.rt)
+        result = mgr.create_strategy(
+            name=strategy_name,
+            symbol=symbol,
+            timeframe=timeframe,
+            mql5_code=mql5_code,
+            description=f"Auto-generated from: {text[:100]}",
+        )
+
+        if not result.ok:
+            return DeskResponse(
+                narrative=f"Failed to create strategy: {result.message}",
+                tool_calls=[],
+                structured={"kind": "strategy_develop", "error": result.message},
+                route=route,
+            )
+
+        narrative = (
+            f"Created strategy '{strategy_name}' for {symbol} {timeframe}.\n\n"
+            f"{result.message}\n\n"
+            f"Preview:\n```mql5\n{mql5_code[:500]}...\n```\n\n"
+            f"Say 'compile this strategy' to compile it via MetaEditor, "
+            f"or 'backtest this strategy' to run a historical test."
+        )
+
+        return DeskResponse(
+            narrative=narrative,
+            tool_calls=[
+                {
+                    "name": "strategy.create",
+                    "arguments": {
+                        "name": strategy_name,
+                        "symbol": symbol,
+                        "timeframe": timeframe,
+                        "mql5_code": mql5_code,
+                    },
+                    "result": {
+                        "ok": True,
+                        "strategy_id": result.strategy_id,
+                        "message": result.message,
+                    },
+                }
+            ],
+            structured={
+                "kind": "strategy_develop",
+                "strategy_id": result.strategy_id,
+                "name": strategy_name,
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "mql5_code": mql5_code,
+            },
+            route=route,
+        )
+
+    def _handle_strategy_backtest(self, route: DeskRoute) -> DeskResponse:
+        """Run a backtest for the most recent strategy."""
+        from backend.ignite.agent.strategy import StrategyManager
+
+        mgr = StrategyManager(self.rt)
+        strategies = mgr.list_strategies()
+
+        if not strategies:
+            return DeskResponse(
+                narrative="No strategies found. Create one first by asking me to "
+                "create an EA for XAUUSD.",
+                tool_calls=[],
+                structured={"kind": "strategy_backtest", "error": "no_strategies"},
+                route=route,
+            )
+
+        # Use the most recent strategy
+        strategy = strategies[0]
+
+        # Determine date range (last 90 days by default)
+        from datetime import timedelta, timezone
+
+        end_date = datetime.now(timezone.utc).strftime("%Y.%m.%d")
+        start_date = (
+            datetime.now(timezone.utc) - timedelta(days=90)
+        ).strftime("%Y.%m.%d")
+
+        result = mgr.run_backtest(
+            strategy_id=strategy["id"],
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        if not result.ok:
+            return DeskResponse(
+                narrative=f"Backtest failed: {result.message}",
+                tool_calls=[],
+                structured={"kind": "strategy_backtest", "error": result.message},
+                route=route,
+            )
+
+        data = result.data.get("result", {})
+        narrative = (
+            f"Backtest complete for '{strategy['name']}' ({strategy['symbol']} "
+            f"{strategy['timeframe']}):\n"
+            f"  Period: {start_date} to {end_date}\n"
+            f"  Trades: {data.get('total_trades', 0)} "
+            f"(Win: {data.get('winning_trades', 0)}, Loss: {data.get('losing_trades', 0)})\n"
+            f"  Win rate: {data.get('win_rate', 0):.1f}%\n"
+            f"  Profit factor: {data.get('profit_factor', 0):.2f}\n"
+            f"  Net profit: {data.get('net_profit', 0):.2f}\n"
+            f"  Max drawdown: {data.get('max_drawdown', 0):.2f}\n"
+            f"  Sharpe ratio: {data.get('sharpe_ratio', 0):.2f}\n\n"
+            f"Backtest ID: {result.data.get('backtest_id')}\n"
+            f"Say 'promote this strategy' to send it to shadow/demo trading."
+        )
+
+        return DeskResponse(
+            narrative=narrative,
+            tool_calls=[
+                {
+                    "name": "strategy.backtest",
+                    "arguments": {
+                        "strategy_id": strategy["id"],
+                        "start_date": start_date,
+                        "end_date": end_date,
+                    },
+                    "result": data,
+                }
+            ],
+            structured={
+                "kind": "strategy_backtest",
+                "strategy_id": strategy["id"],
+                "backtest_id": result.data.get("backtest_id"),
+                "result": data,
+            },
+            route=route,
+        )
+
+    def _handle_strategy_list(self, route: DeskRoute) -> DeskResponse:
+        """List stored strategies."""
+        from backend.ignite.agent.strategy import StrategyManager
+
+        mgr = StrategyManager(self.rt)
+        strategies = mgr.list_strategies()
+
+        if not strategies:
+            return DeskResponse(
+                narrative="No strategies found. Create one by asking me to "
+                "create an EA for XAUUSD M15.",
+                tool_calls=[],
+                structured={"kind": "strategy_list", "strategies": []},
+                route=route,
+            )
+
+        lines = ["Stored strategies:"]
+        for s in strategies:
+            status_emoji = {
+                "draft": "📝",
+                "compiled": "🔨",
+                "backtested": "📊",
+                "shadow": "👻",
+                "demo": "🎮",
+                "live": "🔴",
+                "archived": "🗄️",
+            }.get(s["status"], "❓")
+            lines.append(
+                f"  {status_emoji} {s['name']} ({s['symbol']} {s['timeframe']}) "
+                f"v{s['version']} — {s['status']}"
+            )
+            if s.get("win_rate") is not None:
+                lines.append(
+                    f"      Win rate: {s['win_rate']:.1f}% | "
+                    f"Profit factor: {s.get('profit_factor', 0):.2f} | "
+                    f"Trades: {s.get('total_trades', 0)}"
+                )
+
+        return DeskResponse(
+            narrative="\n".join(lines),
+            tool_calls=[
+                {
+                    "name": "strategy.list",
+                    "arguments": {},
+                    "result": {"strategies": strategies, "count": len(strategies)},
+                }
+            ],
+            structured={
+                "kind": "strategy_list",
+                "strategies": strategies,
+            },
+            route=route,
+        )
+
+    def _handle_strategy_get(self, route: DeskRoute) -> DeskResponse:
+        """Get strategy details by ID."""
+        from backend.ignite.agent.strategy import StrategyManager
+
+        mgr = StrategyManager(self.rt)
+
+        # If no specific strategy ID, get the most recent
+        strategy_id = None
+        # Check if the text mentions a strategy name or ID
+        # For now, return the most recent strategy
+        strategies = mgr.list_strategies()
+        if not strategies:
+            return DeskResponse(
+                narrative="No strategies found.",
+                tool_calls=[],
+                structured={"kind": "strategy_get", "error": "no_strategies"},
+                route=route,
+            )
+
+        strategy = strategies[0]
+        backtests = mgr.list_backtests(strategy["id"])
+
+        lines = [
+            f"Strategy: {strategy['name']}",
+            f"Symbol: {strategy['symbol']} {strategy['timeframe']}",
+            f"Version: {strategy['version']} | Status: {strategy['status']}",
+            f"Created: {strategy['created_at']}",
+        ]
+        if strategy.get("description"):
+            lines.append(f"Description: {strategy['description']}")
+        if strategy.get("win_rate") is not None:
+            lines.append(
+                f"Performance: {strategy['winning_trades']}/{strategy['total_trades']} "
+                f"wins ({strategy['win_rate']:.1f}%), "
+                f"PF {strategy.get('profit_factor', 0):.2f}, "
+                f"Max DD {strategy.get('max_drawdown', 0):.2f}"
+            )
+        if backtests:
+            latest = backtests[0]
+            lines.append(
+                f"Latest backtest: {latest['start_date']} to {latest['end_date']}, "
+                f"net profit {latest.get('net_profit', 0):.2f}"
+            )
+        lines.append(f"\nMQL5 code preview:\n{strategy['mql5_code'][:300]}...")
+
+        return DeskResponse(
+            narrative="\n".join(lines),
+            tool_calls=[
+                {
+                    "name": "strategy.get",
+                    "arguments": {"strategy_id": strategy["id"]},
+                    "result": {
+                        "strategy": strategy,
+                        "backtests": backtests,
+                    },
+                }
+            ],
+            structured={
+                "kind": "strategy_get",
+                "strategy": strategy,
+                "backtests": backtests,
+            },
+            route=route,
+        )
+
+    def _extract_mql5_code(self, text: str) -> str:
+        """Extract MQL5 code from LLM response (inside code block or full text)."""
+        # Try to find code block
+        match = re.search(
+            r"```(?:mql5|cpp|c)?\s*\n(.*?)\n```", text, re.DOTALL | re.IGNORECASE
+        )
+        if match:
+            return match.group(1).strip()
+        # Fallback: look for #property or #include at start
+        if "#property" in text or "#include" in text:
+            # Find from first #property or #include
+            idx = min(
+                [i for i in (text.find("#property"), text.find("#include")) if i >= 0]
+            )
+            return text[idx:].strip()
+        return ""

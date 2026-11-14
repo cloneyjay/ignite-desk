@@ -350,3 +350,86 @@ CREATE TABLE IF NOT EXISTS procedural_memory (
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
 );
+
+-- ---------------------------------------------------------------------------
+-- Strategy development: MQL5 Expert Advisors and backtest results
+-- ---------------------------------------------------------------------------
+
+-- Strategy definitions (one row per strategy, latest version)
+CREATE TABLE IF NOT EXISTS strategies (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    description     TEXT,
+    symbol          TEXT NOT NULL,
+    timeframe       TEXT NOT NULL,
+    mql5_code       TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'draft',  -- draft, compiled, backtested, shadow, demo, live, archived
+    version         INTEGER NOT NULL DEFAULT 1,
+    p_up            REAL,
+    edge_atr        REAL,
+    total_trades    INTEGER,
+    winning_trades  INTEGER,
+    losing_trades   INTEGER,
+    win_rate        REAL,
+    profit_factor   REAL,
+    max_drawdown    REAL,
+    sharpe_ratio    REAL,
+    initial_balance REAL,
+    final_balance   REAL,
+    parameters_json TEXT,          -- input parameters for the EA
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    backtest_id     TEXT           -- reference to latest backtest
+);
+
+CREATE INDEX IF NOT EXISTS idx_strategies_symbol ON strategies (symbol, timeframe);
+CREATE INDEX IF NOT EXISTS idx_strategies_status ON strategies (status);
+
+-- Strategy versions (immutable history of code changes)
+CREATE TABLE IF NOT EXISTS strategy_versions (
+    id              TEXT PRIMARY KEY,
+    strategy_id     TEXT NOT NULL REFERENCES strategies(id) ON DELETE CASCADE,
+    version         INTEGER NOT NULL,
+    mql5_code       TEXT NOT NULL,
+    change_note     TEXT,
+    compiled        INTEGER NOT NULL DEFAULT 0,
+    compile_errors  TEXT,
+    compiled_at     TEXT,
+    created_at      TEXT NOT NULL,
+    UNIQUE(strategy_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_strategy_versions_strategy ON strategy_versions (strategy_id, version);
+
+-- Backtest results from MT5 Strategy Tester
+CREATE TABLE IF NOT EXISTS strategy_backtests (
+    id              TEXT PRIMARY KEY,
+    strategy_id     TEXT NOT NULL REFERENCES strategies(id) ON DELETE CASCADE,
+    version         INTEGER NOT NULL,
+    start_date      TEXT NOT NULL,
+    end_date        TEXT NOT NULL,
+    symbol          TEXT NOT NULL,
+    timeframe       TEXT NOT NULL,
+    initial_balance REAL NOT NULL,
+    final_balance   REAL,
+    gross_profit    REAL,
+    gross_loss      REAL,
+    net_profit      REAL,
+    profit_factor   REAL,
+    total_trades    INTEGER,
+    winning_trades  INTEGER,
+    losing_trades   INTEGER,
+    win_rate        REAL,
+    max_drawdown    REAL,
+    max_drawdown_pct REAL,
+    sharpe_ratio    REAL,
+    recovery_factor REAL,
+    expectancy      REAL,
+    equity_curve_json TEXT,        -- array of {ts, balance, equity}
+    trades_json     TEXT,          -- array of trade objects
+    parameters_json TEXT,          -- input parameters used
+    tester_report_json TEXT,       -- raw MT5 tester report
+    created_at      TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_strategy_backtests_strategy ON strategy_backtests (strategy_id, created_at);

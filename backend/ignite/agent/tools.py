@@ -1050,6 +1050,162 @@ class ToolRegistry:
             )
         )
 
+        # ============================================================
+        # STRATEGY tools (read/prepare — create, compile, backtest EAs)
+        # ============================================================
+
+        self._register(
+            ToolSpec(
+                name="strategy.create",
+                permission="prepare",
+                description="Create a new trading strategy: write MQL5 EA code and save it",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "symbol": {"type": "string"},
+                        "timeframe": {"type": "string", "enum": ["M5", "M15", "M30", "H1"]},
+                        "description": {"type": "string"},
+                        "mql5_code": {"type": "string"},
+                        "parameters": {"type": "object"},
+                    },
+                    "required": ["name", "symbol", "timeframe", "mql5_code"],
+                    "additionalProperties": False,
+                },
+                output_schema={
+                    "type": "object",
+                    "properties": {
+                        "ok": {"type": "boolean"},
+                        "strategy_id": {"type": "string"},
+                        "message": {"type": "string"},
+                        "file_path": {"type": "string"},
+                    },
+                    "required": ["ok", "strategy_id", "message"],
+                    "additionalProperties": False,
+                },
+                timeout_s=10.0,
+                handler=self._strategy_create,
+            )
+        )
+
+        self._register(
+            ToolSpec(
+                name="strategy.compile",
+                permission="prepare",
+                description="Compile an MQL5 strategy via MetaEditor MCP tool",
+                input_schema={
+                    "type": "object",
+                    "properties": {"strategy_id": {"type": "string"}},
+                    "required": ["strategy_id"],
+                    "additionalProperties": False,
+                },
+                output_schema={
+                    "type": "object",
+                    "properties": {
+                        "ok": {"type": "boolean"},
+                        "strategy_id": {"type": "string"},
+                        "compiled": {"type": "boolean"},
+                        "message": {"type": "string"},
+                        "errors": {"type": ["string", "null"]},
+                        "warnings": {"type": ["string", "null"]},
+                    },
+                    "required": ["ok", "strategy_id", "compiled", "message"],
+                    "additionalProperties": False,
+                },
+                timeout_s=30.0,
+                handler=self._strategy_compile,
+            )
+        )
+
+        self._register(
+            ToolSpec(
+                name="strategy.backtest",
+                permission="prepare",
+                description="Run MT5 Strategy Tester backtest for a compiled strategy",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "strategy_id": {"type": "string"},
+                        "start_date": {"type": "string"},
+                        "end_date": {"type": "string"},
+                        "parameters": {"type": "object"},
+                    },
+                    "required": ["strategy_id", "start_date", "end_date"],
+                    "additionalProperties": False,
+                },
+                output_schema={
+                    "type": "object",
+                    "properties": {
+                        "ok": {"type": "boolean"},
+                        "strategy_id": {"type": "string"},
+                        "backtest_id": {"type": "string"},
+                        "message": {"type": "string"},
+                        "result": {"type": "object"},
+                    },
+                    "required": ["ok", "strategy_id", "message"],
+                    "additionalProperties": False,
+                },
+                timeout_s=60.0,
+                handler=self._strategy_backtest,
+            )
+        )
+
+        self._register(
+            ToolSpec(
+                name="strategy.list",
+                permission="read",
+                description="List stored strategies, optionally filtered by status",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "status": {
+                            "type": "string",
+                            "enum": ["draft", "compiled", "backtested", "shadow", "demo", "live", "archived"],
+                        },
+                    },
+                    "additionalProperties": False,
+                },
+                output_schema={
+                    "type": "object",
+                    "properties": {
+                        "ok": {"type": "boolean"},
+                        "strategies": {"type": "array"},
+                        "count": {"type": "integer"},
+                    },
+                    "required": ["ok", "strategies", "count"],
+                    "additionalProperties": False,
+                },
+                timeout_s=5.0,
+                handler=self._strategy_list,
+            )
+        )
+
+        self._register(
+            ToolSpec(
+                name="strategy.get",
+                permission="read",
+                description="Get strategy details and backtest results by ID",
+                input_schema={
+                    "type": "object",
+                    "properties": {"strategy_id": {"type": "string"}},
+                    "required": ["strategy_id"],
+                    "additionalProperties": False,
+                },
+                output_schema={
+                    "type": "object",
+                    "properties": {
+                        "ok": {"type": "boolean"},
+                        "strategy": {"type": "object"},
+                        "backtests": {"type": "array"},
+                    },
+                    "required": ["ok", "strategy"],
+                    "additionalProperties": False,
+                },
+                timeout_s=5.0,
+                handler=self._strategy_get,
+            )
+        )
+
     def _register(self, spec: ToolSpec) -> None:
         self._tools[spec.name] = spec
 
@@ -1409,3 +1565,78 @@ class ToolRegistry:
     async def _procedural_query(self, rt: Runtime, args: dict[str, Any]) -> dict[str, Any]:
         results = rt.store.procedural_query(args.get("limit", 100))
         return {"ok": True, "results": results, "count": len(results)}
+
+    # ============================================================
+    # Strategy tools
+    # ============================================================
+
+    async def _strategy_create(self, rt: Runtime, args: dict[str, Any]) -> dict[str, Any]:
+        from backend.ignite.agent.strategy import StrategyManager
+        mgr = StrategyManager(rt)
+        result = mgr.create_strategy(
+            name=args["name"],
+            symbol=args["symbol"],
+            timeframe=args["timeframe"],
+            mql5_code=args["mql5_code"],
+            description=args.get("description"),
+            parameters=args.get("parameters"),
+        )
+        return {
+            "ok": result.ok,
+            "strategy_id": result.strategy_id,
+            "message": result.message,
+            "file_path": result.data.get("file_path"),
+        }
+
+    async def _strategy_compile(self, rt: Runtime, args: dict[str, Any]) -> dict[str, Any]:
+        from backend.ignite.agent.strategy import StrategyManager
+        mgr = StrategyManager(rt)
+        result = mgr.compile_strategy(args["strategy_id"])
+        return {
+            "ok": result.ok,
+            "strategy_id": result.strategy_id,
+            "compiled": result.data.get("compiled", False),
+            "message": result.message,
+            "errors": result.data.get("errors"),
+            "warnings": result.data.get("warnings"),
+        }
+
+    async def _strategy_backtest(self, rt: Runtime, args: dict[str, Any]) -> dict[str, Any]:
+        from backend.ignite.agent.strategy import StrategyManager
+        mgr = StrategyManager(rt)
+        result = mgr.run_backtest(
+            strategy_id=args["strategy_id"],
+            start_date=args["start_date"],
+            end_date=args["end_date"],
+            parameters=args.get("parameters"),
+        )
+        return {
+            "ok": result.ok,
+            "strategy_id": result.strategy_id,
+            "backtest_id": result.data.get("backtest_id"),
+            "message": result.message,
+            "result": result.data.get("result"),
+        }
+
+    async def _strategy_list(self, rt: Runtime, args: dict[str, Any]) -> dict[str, Any]:
+        from backend.ignite.agent.strategy import StrategyManager
+        mgr = StrategyManager(rt)
+        strategies = mgr.list_strategies(status=args.get("status"))
+        return {
+            "ok": True,
+            "strategies": strategies,
+            "count": len(strategies),
+        }
+
+    async def _strategy_get(self, rt: Runtime, args: dict[str, Any]) -> dict[str, Any]:
+        from backend.ignite.agent.strategy import StrategyManager
+        mgr = StrategyManager(rt)
+        strategy = mgr.get_strategy(args["strategy_id"])
+        if not strategy:
+            return {"ok": False, "strategy": None, "backtests": []}
+        backtests = mgr.list_backtests(args["strategy_id"])
+        return {
+            "ok": True,
+            "strategy": strategy,
+            "backtests": backtests,
+        }

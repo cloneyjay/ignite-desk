@@ -1148,6 +1148,194 @@ class Store:
             results.append(item)
         return results
 
+    # ------------------------------------------------------------------ strategies
+
+    def insert_strategy(self, strategy: dict[str, Any]) -> str:
+        """Insert a new strategy definition."""
+        self._conn.execute(
+            """
+            INSERT INTO strategies (
+                id, name, description, symbol, timeframe, mql5_code, status,
+                version, p_up, edge_atr, total_trades, winning_trades,
+                losing_trades, win_rate, profit_factor, max_drawdown,
+                sharpe_ratio, initial_balance, final_balance, parameters_json,
+                created_at, updated_at, backtest_id
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                strategy["id"],
+                strategy["name"],
+                strategy.get("description"),
+                strategy["symbol"],
+                strategy["timeframe"],
+                strategy["mql5_code"],
+                strategy.get("status", "draft"),
+                strategy.get("version", 1),
+                strategy.get("p_up"),
+                strategy.get("edge_atr"),
+                strategy.get("total_trades"),
+                strategy.get("winning_trades"),
+                strategy.get("losing_trades"),
+                strategy.get("win_rate"),
+                strategy.get("profit_factor"),
+                strategy.get("max_drawdown"),
+                strategy.get("sharpe_ratio"),
+                strategy.get("initial_balance"),
+                strategy.get("final_balance"),
+                json.dumps(strategy.get("parameters", {}), default=str),
+                strategy["created_at"],
+                strategy["updated_at"],
+                strategy.get("backtest_id"),
+            ),
+        )
+        self._conn.commit()
+        return strategy["id"]
+
+    def get_strategy(self, strategy_id: str) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            "SELECT * FROM strategies WHERE id=?", (strategy_id,)
+        ).fetchone()
+        if not row:
+            return None
+        item = dict(row)
+        item["parameters"] = json.loads(item.pop("parameters_json") or "{}")
+        return item
+
+    def list_strategies(self, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        if status:
+            rows = self._conn.execute(
+                "SELECT * FROM strategies WHERE status=? ORDER BY updated_at DESC LIMIT ?",
+                (status, limit),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM strategies ORDER BY updated_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        results = []
+        for row in rows:
+            item = dict(row)
+            item["parameters"] = json.loads(item.pop("parameters_json") or "{}")
+            results.append(item)
+        return results
+
+    def update_strategy(self, strategy_id: str, fields: dict[str, Any]) -> None:
+        if not fields:
+            return
+        fields["updated_at"] = utc_now()
+        assignments = ", ".join(f"{k}=?" for k in fields)
+        values = list(fields.values())
+        values.append(strategy_id)
+        self._conn.execute(
+            f"UPDATE strategies SET {assignments} WHERE id=?", values
+        )
+        self._conn.commit()
+
+    def insert_strategy_version(self, version: dict[str, Any]) -> str:
+        """Insert an immutable strategy version."""
+        self._conn.execute(
+            """
+            INSERT INTO strategy_versions (
+                id, strategy_id, version, mql5_code, change_note,
+                compiled, compile_errors, compiled_at, created_at
+            ) VALUES (?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                version["id"],
+                version["strategy_id"],
+                version["version"],
+                version["mql5_code"],
+                version.get("change_note"),
+                int(version.get("compiled", False)),
+                version.get("compile_errors"),
+                version.get("compiled_at"),
+                version["created_at"],
+            ),
+        )
+        self._conn.commit()
+        return version["id"]
+
+    def list_strategy_versions(self, strategy_id: str) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM strategy_versions WHERE strategy_id=? ORDER BY version DESC",
+            (strategy_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def insert_strategy_backtest(self, backtest: dict[str, Any]) -> str:
+        """Insert a backtest result."""
+        self._conn.execute(
+            """
+            INSERT INTO strategy_backtests (
+                id, strategy_id, version, start_date, end_date, symbol, timeframe,
+                initial_balance, final_balance, gross_profit, gross_loss,
+                net_profit, profit_factor, total_trades, winning_trades,
+                losing_trades, win_rate, max_drawdown, max_drawdown_pct,
+                sharpe_ratio, recovery_factor, expectancy, equity_curve_json,
+                trades_json, parameters_json, tester_report_json, created_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                backtest["id"],
+                backtest["strategy_id"],
+                backtest["version"],
+                backtest["start_date"],
+                backtest["end_date"],
+                backtest["symbol"],
+                backtest["timeframe"],
+                backtest["initial_balance"],
+                backtest.get("final_balance"),
+                backtest.get("gross_profit"),
+                backtest.get("gross_loss"),
+                backtest.get("net_profit"),
+                backtest.get("profit_factor"),
+                backtest.get("total_trades"),
+                backtest.get("winning_trades"),
+                backtest.get("losing_trades"),
+                backtest.get("win_rate"),
+                backtest.get("max_drawdown"),
+                backtest.get("max_drawdown_pct"),
+                backtest.get("sharpe_ratio"),
+                backtest.get("recovery_factor"),
+                backtest.get("expectancy"),
+                json.dumps(backtest.get("equity_curve", []), default=str),
+                json.dumps(backtest.get("trades", []), default=str),
+                json.dumps(backtest.get("parameters", {}), default=str),
+                json.dumps(backtest.get("tester_report", {}), default=str),
+                backtest["created_at"],
+            ),
+        )
+        self._conn.commit()
+        return backtest["id"]
+
+    def get_strategy_backtest(self, backtest_id: str) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            "SELECT * FROM strategy_backtests WHERE id=?", (backtest_id,)
+        ).fetchone()
+        if not row:
+            return None
+        item = dict(row)
+        item["equity_curve"] = json.loads(item.pop("equity_curve_json") or "[]")
+        item["trades"] = json.loads(item.pop("trades_json") or "[]")
+        item["parameters"] = json.loads(item.pop("parameters_json") or "{}")
+        item["tester_report"] = json.loads(item.pop("tester_report_json") or "{}")
+        return item
+
+    def list_strategy_backtests(self, strategy_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM strategy_backtests WHERE strategy_id=? ORDER BY created_at DESC LIMIT ?",
+            (strategy_id, limit),
+        ).fetchall()
+        results = []
+        for row in rows:
+            item = dict(row)
+            item["equity_curve"] = json.loads(item.pop("equity_curve_json") or "[]")
+            item["trades"] = json.loads(item.pop("trades_json") or "[]")
+            item["parameters"] = json.loads(item.pop("parameters_json") or "{}")
+            item["tester_report"] = json.loads(item.pop("tester_report_json") or "{}")
+            results.append(item)
+        return results
+
 
 def uuid_suffix() -> str:
     import uuid
