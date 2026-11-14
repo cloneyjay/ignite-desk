@@ -96,7 +96,7 @@ export function Badge({
   );
 }
 
-type ButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "long" | "short";
+type ButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "danger-outline" | "long" | "short";
 
 const VARIANTS: Record<ButtonVariant, string> = {
   primary:
@@ -107,6 +107,8 @@ const VARIANTS: Record<ButtonVariant, string> = {
     "border-transparent bg-transparent text-fog hover:text-paper hover:bg-ink-800 disabled:text-fog/30",
   danger:
     "border-short/60 bg-short/15 text-short hover:bg-short/25 disabled:border-line disabled:bg-transparent disabled:text-fog/40",
+  "danger-outline":
+    "border-short/60 bg-transparent text-short hover:bg-short/10 disabled:border-line disabled:bg-transparent disabled:text-fog/40",
   long: "border-long/60 bg-long/15 text-long hover:bg-long/25 disabled:border-line disabled:bg-transparent disabled:text-fog/40",
   short:
     "border-short/60 bg-short/15 text-short hover:bg-short/25 disabled:border-line disabled:bg-transparent disabled:text-fog/40",

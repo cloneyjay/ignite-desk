@@ -178,6 +178,29 @@ class FakeMCP:
                 if str(position["position_id"]) != str(args.get("position_ticket"))
             ]
             return {"ok": True, "result": {"retcode": 0}}
+        if name == "get_chart_history":
+            symbol = args.get("symbol", "XAUUSD")
+            timeframe = args.get("timeframe", "M15")
+            count = args.get("count", 500)
+            # Generate fake bars
+            bars = []
+            base_price = 3930.0
+            for i in range(count):
+                # Generate valid OHLC data
+                open_price = base_price + np.random.uniform(-5, 5)
+                close_price = base_price + np.random.uniform(-5, 5)
+                high_price = max(open_price, close_price) + np.random.uniform(0, 10)
+                low_price = min(open_price, close_price) - np.random.uniform(0, 10)
+                bars.append({
+                    "time": (now - timedelta(minutes=15 * (count - i))).strftime("%Y-%m-%d %H:%M:%S"),
+                    "open": round(open_price, 2),
+                    "high": round(high_price, 2),
+                    "low": round(low_price, 2),
+                    "close": round(close_price, 2),
+                    "volume": 100 + np.random.randint(-50, 50),
+                    "spread": 10,
+                })
+            return {"ok": True, "history": bars}
         if name == "add_marketwatch_symbol":
             return {"ok": True}
         if name == "remove_marketwatch_symbol":

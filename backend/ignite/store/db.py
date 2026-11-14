@@ -970,6 +970,185 @@ class Store:
         self._conn.commit()
 
 
+    # -------------------------------------------------------------------- scratchpad
+
+    def scratchpad_write(self, key: str, value: dict[str, Any], ttl_seconds: int | None = None) -> None:
+        from datetime import datetime, timedelta, timezone
+        created = utc_now()
+        expires = None
+        if ttl_seconds:
+            expires = (datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)).isoformat()
+        self._conn.execute(
+            """
+            INSERT INTO scratchpad (key, value_json, created_at, expires_at)
+            VALUES (?,?,?,?)
+            ON CONFLICT(key) DO UPDATE SET
+                value_json=excluded.value_json,
+                created_at=excluded.created_at,
+                expires_at=excluded.expires_at
+            """,
+            (key, json.dumps(value, default=str), created, expires),
+        )
+        self._conn.commit()
+
+    def scratchpad_read(self, key: str) -> dict[str, Any] | None:
+        from datetime import datetime, timezone
+        row = self._conn.execute(
+            "SELECT value_json, expires_at FROM scratchpad WHERE key=?", (key,)
+        ).fetchone()
+        if not row:
+            return None
+        # Check expiry
+        if row["expires_at"]:
+            expires = datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00"))
+            if datetime.now(timezone.utc) > expires:
+                self._conn.execute("DELETE FROM scratchpad WHERE key=?", (key,))
+                self._conn.commit()
+                return None
+        return json.loads(row["value_json"])
+
+    def scratchpad_delete(self, key: str) -> None:
+        self._conn.execute("DELETE FROM scratchpad WHERE key=?", (key,))
+        self._conn.commit()
+
+    def scratchpad_cleanup_expired(self) -> int:
+        cursor = self._conn.execute(
+            "DELETE FROM scratchpad WHERE expires_at IS NOT NULL AND expires_at < ?",
+            (utc_now(),),
+        )
+        self._conn.commit()
+        return cursor.rowcount
+
+    # -------------------------------------------------------------------- episodic memory
+
+    def episodic_record(self, type: str, payload: dict[str, Any], symbol: str | None = None,
+                        timeframe: str | None = None, outcome: str | None = None,
+                        tags: list[str] | None = None) -> int:
+        cursor = self._conn.execute(
+            """
+            INSERT INTO episodic_memory (type, symbol, timeframe, payload_json, outcome, tags_json, created_at)
+            VALUES (?,?,?,?,?,?,?)
+            """,
+            (type, symbol, timeframe, json.dumps(payload, default=str), outcome,
+             json.dumps(tags) if tags else None, utc_now()),
+        )
+        self._conn.commit()
+        return cursor.lastrowid
+
+    def episodic_query(self, symbol: str | None = None, type: str | None = None,
+                       timeframe: str | None = None, limit: int = 100,
+                       since: str | None = None) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM episodic_memory WHERE 1=1"
+        params = []
+        if symbol:
+            sql += " AND symbol=?"
+            params.append(symbol)
+        if type:
+            sql += " AND type=?"
+            params.append(type)
+        if timeframe:
+            sql += " AND timeframe=?"
+            params.append(timeframe)
+        if since:
+            sql += " AND created_at >= ?"
+            params.append(since)
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        rows = self._conn.execute(sql, params).fetchall()
+        results = []
+        for row in rows:
+            item = dict(row)
+            payload = json.loads(item.pop("payload_json"))
+            # Flatten payload into the item
+            item.update(payload)
+            if item.get("tags_json"):
+                item["tags"] = json.loads(item.pop("tags_json"))
+            results.append(item)
+        return results
+
+    # -------------------------------------------------------------------- semantic memory
+
+    def semantic_remember(self, key: str, value: dict[str, Any], tags: list[str] | None = None,
+                          confidence: float = 1.0) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO semantic_memory (key, value_json, tags_json, confidence, created_at, updated_at)
+            VALUES (?,?,?,?,?,?)
+            ON CONFLICT(key) DO UPDATE SET
+                value_json=excluded.value_json,
+                tags_json=excluded.tags_json,
+                confidence=excluded.confidence,
+                updated_at=excluded.updated_at
+            """,
+            (key, json.dumps(value, default=str),
+             json.dumps(tags) if tags else None, confidence, utc_now(), utc_now()),
+        )
+        self._conn.commit()
+
+    def semantic_recall(self, query: str, tags: list[str] | None = None, limit: int = 10) -> list[dict[str, Any]]:
+        """Simple text search on key and tags."""
+        sql = "SELECT * FROM semantic_memory WHERE 1=1"
+        params = []
+        if query:
+            sql += " AND (key LIKE ? OR value_json LIKE ?)"
+            params.extend([f"%{query}%", f"%{query}%"])
+        if tags:
+            placeholders = ",".join("?" * len(tags))
+            sql += f" AND tags_json IS NOT NULL AND ({' OR '.join(['tags_json LIKE ?'] * len(tags))})"
+            params.extend([f"%{tag}%" for tag in tags])
+        sql += " ORDER BY confidence DESC, updated_at DESC LIMIT ?"
+        params.append(limit)
+        rows = self._conn.execute(sql, params).fetchall()
+        results = []
+        for row in rows:
+            item = dict(row)
+            item["value"] = json.loads(item.pop("value_json"))
+            if item.get("tags_json"):
+                item["tags"] = json.loads(item.pop("tags_json"))
+            results.append(item)
+        return results
+
+    # -------------------------------------------------------------------- procedural memory
+
+    def procedural_learn(self, trigger: str, action: str, condition: dict[str, Any],
+                         confidence: float = 1.0) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO procedural_memory (trigger, action, condition_json, confidence, created_at, updated_at)
+            VALUES (?,?,?,?,?,?)
+            ON CONFLICT(trigger) DO UPDATE SET
+                action=excluded.action,
+                condition_json=excluded.condition_json,
+                confidence=excluded.confidence,
+                updated_at=excluded.updated_at
+            """,
+            (trigger, action, json.dumps(condition, default=str), confidence, utc_now(), utc_now()),
+        )
+        self._conn.commit()
+
+    def procedural_recall(self, trigger: str) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            "SELECT * FROM procedural_memory WHERE trigger=?", (trigger,)
+        ).fetchone()
+        if not row:
+            return None
+        item = dict(row)
+        item["condition"] = json.loads(item.pop("condition_json"))
+        return item
+
+    def procedural_query(self, limit: int = 100) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM procedural_memory ORDER BY confidence DESC, use_count DESC LIMIT ?",
+            (limit,)
+        ).fetchall()
+        results = []
+        for row in rows:
+            item = dict(row)
+            item["condition"] = json.loads(item.pop("condition_json"))
+            results.append(item)
+        return results
+
+
 def uuid_suffix() -> str:
     import uuid
 

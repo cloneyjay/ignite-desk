@@ -182,6 +182,7 @@ def execute_draft(
     *,
     confirm: bool,
     token: str | None,
+    actor: str = "api",
 ) -> dict[str, Any]:
     if not confirm:
         raise ExecutionError(
@@ -232,7 +233,7 @@ def execute_draft(
         if not state["executable"]:
             failing = next(c for c in state["checks"] if not c["ok"])
             rt.store.audit(
-                "api",
+                actor,
                 "execute_rejected",
                 {"draft_id": draft_id, "check": failing},
                 "rejected",
@@ -254,7 +255,7 @@ def execute_draft(
             check = check_market_order(rt.mcp, symbol, order_side, lots, sl, tp)
         except BrokerError as exc:
             rt.store.audit(
-                "api", "execute_check_failed", {"draft_id": draft_id}, str(exc)
+                actor, "execute_check_failed", {"draft_id": draft_id}, str(exc)
             )
             raise ExecutionError(409, "broker_check_failed", str(exc)) from exc
 
@@ -268,37 +269,46 @@ def execute_draft(
         try:
             sent = send_market_order(rt.mcp, symbol, order_side, lots, sl, tp, comment)
         except Exception as exc:  # noqa: BLE001 - record exactly what the broker said
-            rt.store.transition_draft(draft_id, "executing", "failed")
-            rt.store.insert_order(
-                {
-                    "id": uuid.uuid4().hex,
-                    "draft_id": draft_id,
-                    "created_at": utc_now(),
-                    "symbol": symbol,
-                    "side": side,
-                    "lots": lots,
-                    "requested_price": reference,
-                    "filled_price": None,
-                    "sl": sl,
-                    "tp": tp,
-                    "ticket": None,
-                    "position_id": None,
-                    "state": "failed",
-                    "comment": comment,
-                    "error": str(exc),
-                    "broker_json": json.dumps({"error": str(exc)}),
+            # A transport/protocol error can happen after MT5 accepted the order.
+            # Reconcile the terminal before recording a failure or allowing retry.
+            position = _await_position(rt, symbol, before, timeout_s=2.0)
+            if position is not None:
+                sent = {
+                    "reconciled_after_error": str(exc),
+                    "position_id": position["ticket"],
                 }
-            )
-            rt.store.audit(
-                "api", "execute_failed", {"draft_id": draft_id}, str(exc)
-            )
-            rt.events.publish(
-                "execution.failed",
-                {"draft_id": draft_id, "symbol": symbol, "error": str(exc)},
-            )
-            raise ExecutionError(
-                502, "order_rejected", str(exc), {"broker": sent}
-            ) from exc
+            else:
+                rt.store.transition_draft(draft_id, "executing", "failed")
+                rt.store.insert_order(
+                    {
+                        "id": uuid.uuid4().hex,
+                        "draft_id": draft_id,
+                        "created_at": utc_now(),
+                        "symbol": symbol,
+                        "side": side,
+                        "lots": lots,
+                        "requested_price": reference,
+                        "filled_price": None,
+                        "sl": sl,
+                        "tp": tp,
+                        "ticket": None,
+                        "position_id": None,
+                        "state": "failed",
+                        "comment": comment,
+                        "error": str(exc),
+                        "broker_json": json.dumps({"error": str(exc)}),
+                    }
+                )
+                rt.store.audit(
+                    actor, "execute_failed", {"draft_id": draft_id}, str(exc)
+                )
+                rt.events.publish(
+                    "execution.failed",
+                    {"draft_id": draft_id, "symbol": symbol, "error": str(exc)},
+                )
+                raise ExecutionError(
+                    502, "order_rejected", str(exc), {"broker": sent}
+                ) from exc
 
         order_id, position_id = extract_order_ticket(sent)
         position = _await_position(rt, symbol, before, timeout_s=10.0)
@@ -328,7 +338,7 @@ def execute_draft(
         )
         rt.store.transition_draft(draft_id, "executing", final_state)
         rt.store.audit(
-            "api",
+            actor,
             "execute",
             {"draft_id": draft_id, "lots": lots, "side": side, "price": reference},
             final_state,
@@ -362,6 +372,26 @@ def execute_draft(
         "broker_check": check,
         "broker_response": sent,
     }
+
+
+def execute_draft_autonomous(rt: Runtime, draft_id: str) -> dict[str, Any]:
+    """Execute a draft for an enabled autonomous agent through shared guards."""
+    draft = rt.store.get_draft(draft_id)
+    if draft is None:
+        raise ExecutionError(404, "draft_not_found", f"no draft {draft_id}")
+    config = rt.store.agent_config()
+    if not config or not bool(config.get("enabled")):
+        raise ExecutionError(403, "agent_disabled", "autonomous agent is disabled")
+    if rt.kill_switch():
+        raise ExecutionError(409, "kill_switch", "kill switch is enabled")
+    token = rt.issue_token(draft_id, draft["expires_at"])
+    return execute_draft(
+        rt,
+        draft_id,
+        confirm=True,
+        token=token,
+        actor="agent",
+    )
 
 
 def _await_position(

@@ -91,8 +91,8 @@ def positions(mcp: MCPClient, clock: Clock, symbol: str | None = None) -> list[d
                 "lots": float(row.get("volume") or 0.0),
                 "price_open": row.get("price_open"),
                 "price_current": row.get("price_last"),
-                "sl": row.get("sl"),
-                "tp": row.get("tp"),
+                "sl": row.get("sl", row.get("stop_loss")),
+                "tp": row.get("tp", row.get("take_profit")),
                 "profit": row.get("profit"),
                 "swap": row.get("swaps"),
                 "contract_size": row.get("contract_size"),
@@ -199,7 +199,7 @@ def check_market_order(
         "trade_check_market_order",
         {"symbol": symbol, "type": side, "volume": volume, "sl": sl, "tp": tp},
     )
-    if not payload.get("ok"):
+    if not _broker_succeeded(payload):
         raise BrokerError(f"trade_check_market_order refused: {payload}")
     return payload
 
@@ -226,9 +226,56 @@ def send_market_order(
             "comment": comment[:31],
         },
     )
-    if not payload.get("ok"):
+    if not _broker_succeeded(payload):
         raise BrokerError(f"trade_send_market_order failed: {payload}")
     return payload
+
+
+def modify_position_sl_tp(
+    mcp: MCPClient,
+    symbol: str,
+    position_id: str,
+    sl: float | None,
+    tp: float | None,
+) -> dict[str, Any]:
+    arguments: dict[str, Any] = {
+        "symbol": symbol,
+        "position_ticket": position_id,
+    }
+    if sl is not None:
+        arguments["sl"] = sl
+    if tp is not None:
+        arguments["tp"] = tp
+    payload = mcp.call_tool(
+        "trade_modify_sl_tp",
+        arguments,
+    )
+    if not _broker_succeeded(payload) and payload.get("retcode") != 10025:
+        raise BrokerError(f"trade_modify_sl_tp failed: {payload}")
+    return payload
+
+
+def close_position(
+    mcp: MCPClient, symbol: str, position_id: str
+) -> dict[str, Any]:
+    arguments: dict[str, Any] = {
+        "symbol": symbol,
+        "position_ticket": position_id,
+    }
+    payload = mcp.call_tool("trade_close_single_position", arguments)
+    if not _broker_succeeded(payload):
+        raise BrokerError(f"trade_close_single_position failed: {payload}")
+    return payload
+
+
+def _broker_succeeded(payload: dict[str, Any]) -> bool:
+    """Accept both legacy ``ok`` responses and MT5 trade retcodes."""
+    if payload.get("ok") is True:
+        return True
+    try:
+        return int(payload.get("retcode")) in {10008, 10009, 10010, 10025}
+    except (TypeError, ValueError):
+        return False
 
 
 def extract_order_ticket(payload: dict[str, Any]) -> tuple[str | None, str | None]:

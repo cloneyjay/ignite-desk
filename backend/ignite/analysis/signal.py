@@ -7,7 +7,7 @@ else NO TRADE.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 import numpy as np
@@ -37,6 +37,65 @@ class Signal:
 
 class SignalError(RuntimeError):
     pass
+
+
+def validate_against_desk(
+    signal: Signal,
+    *,
+    trend: str,
+    last_close: float,
+    realtime_price: float,
+    atr: float,
+    calendar_events: list[dict[str, object]] | None = None,
+) -> Signal:
+    """Cross-check a forecast with live price action, trend and realised news.
+
+    Kronos remains the source of the forecast, but a trade signal must agree
+    with the current desk state. Calendar outcomes are recorded as evidence;
+    the execution blackout remains the hard calendar safety gate.
+    """
+    if signal.side == "none":
+        return signal
+
+    reasons = list(signal.reasons)
+    conflicts: list[str] = []
+    if signal.side == "long" and trend == "down":
+        conflicts.append("trend is down while Kronos points long")
+    elif signal.side == "short" and trend == "up":
+        conflicts.append("trend is up while Kronos points short")
+
+    move_atr = (realtime_price - last_close) / atr
+    if signal.side == "long" and move_atr < -0.25:
+        conflicts.append(f"live price is {abs(move_atr):.2f} ATR below the last close")
+    elif signal.side == "short" and move_atr > 0.25:
+        conflicts.append(f"live price is {move_atr:.2f} ATR above the last close")
+
+    recent_surprises = []
+    for event in calendar_events or []:
+        if str(event.get("impact") or "").lower() != "high":
+            continue
+        actual = event.get("actual")
+        forecast = event.get("forecast")
+        if actual is None or forecast is None:
+            continue
+        try:
+            surprise = float(actual) - float(forecast)
+        except (TypeError, ValueError):
+            continue
+        if surprise:
+            recent_surprises.append(
+                f"{event.get('name', 'high-impact event')} actual "
+                f"{'beat' if surprise > 0 else 'missed'} forecast"
+            )
+    reasons.extend(recent_surprises[:2])
+
+    if conflicts:
+        return replace(
+            signal,
+            side="none",
+            reasons=tuple(dict.fromkeys(reasons + conflicts)),
+        )
+    return replace(signal, reasons=tuple(dict.fromkeys(reasons)))
 
 
 def evaluate(

@@ -40,7 +40,6 @@ export default function Watchlist() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [execDraftId, setExecDraftId] = useState<string | null>(null);
   const [addValue, setAddValue] = useState("");
-
   // ?analysis=<id> pins a stored analysis for review (audit / deep link).
   const pinnedId = params.get("analysis");
   const pinned = useAnalysis(pinnedId);
@@ -158,14 +157,18 @@ export default function Watchlist() {
     });
   };
 
+  const blackoutList = blackouts.data?.blackouts ?? [];
+  // Sort blackouts by next occurrence (soonest first)
+  const sortedBlackouts = [...blackoutList].sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
+
   const latestError = latest.error;
   const latestProblem = latest.isError && !isNoAnalysis(latestError) ? latestError : null;
-  const blackoutList = blackouts.data?.blackouts ?? [];
 
   return (
-    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[264px_minmax(0,1fr)]">
-      <div className="space-y-3 overflow-y-auto max-h-[calc(100vh-4rem)]">
-        <Panel title="Watchlist" subtitle="Mirrors MT5 Market Watch" bodyClassName="p-2">
+    <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_300px] xl:grid-cols-[280px_minmax(0,1fr)_300px]">
+        {/* Left column: Watchlist + Blackouts */}
+        <div className="hidden space-y-3 xl:block">
+          <Panel title="Watchlist" subtitle="Mirrors MT5 Market Watch" bodyClassName="p-2">
           {symbols.length === 0 ? (
             <div className="px-2 py-3 text-[12px] text-fog">
               {symbolsQuery.isLoading ? "Loading…" : "No symbols yet. Add one below."}
@@ -243,41 +246,67 @@ export default function Watchlist() {
             <div className="text-[11.5px] text-short">
               Calendar unavailable — execution will fail closed.
             </div>
-          ) : blackoutList.length === 0 ? (
+          ) : sortedBlackouts.length === 0 ? (
             <div className="text-[11.5px] text-fog">No blackout windows in range.</div>
           ) : (
             <div className="space-y-1.5">
-              {blackoutList.slice(0, 5).map((window) => (
-                <div
-                  key={`${window.event_id}-${window.start}`}
-                  className="rounded-md border border-short/25 bg-short/[0.06] px-2.5 py-1.5"
-                >
-                  <div className="flex items-center justify-between text-[10.5px] text-short">
-                    <span className="font-semibold">{window.currency}</span>
-                    <span className="font-mono">
-                      {shortTime(window.start)}–{shortTime(window.end)}
-                    </span>
+              {sortedBlackouts.slice(0, 5).map((window) => {
+                const startTime = new Date(window.start).getTime();
+                const now = Date.now();
+                const isActive = startTime <= now && new Date(window.end).getTime() >= now;
+                const isUpcoming = startTime > now && startTime - now <= 60 * 60 * 1000; // within 60 min
+                const rowTone = isActive ? "short" : isUpcoming ? "warn" : "neutral";
+                const timeTone = isActive ? "short" : isUpcoming ? "warn" : "fog";
+                return (
+                  <div
+                    key={`${window.event_id}-${window.start}`}
+                    className={`rounded-md border px-2.5 py-1.5 ${
+                      rowTone === "short"
+                        ? "border-short/30 bg-short/10"
+                        : rowTone === "warn"
+                        ? "border-warn/30 bg-warn/10"
+                        : "border-line/60 bg-ink-800/50"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span
+                        className={`font-mono text-[10.5px] px-1.5 py-0.5 rounded text-[10px] ${
+                          rowTone === "short"
+                            ? "bg-short/20 text-short"
+                            : rowTone === "warn"
+                            ? "bg-warn/20 text-warn"
+                            : "bg-ink-800 text-fog"
+                        }`}
+                      >
+                        {window.currency}
+                      </span>
+                      <span className={`font-mono text-[10.5px] ${timeTone}`}>
+                        {shortTime(window.start)}–{shortTime(window.end)}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 truncate text-[11px] text-paper/75" title={window.name}>
+                      {window.name}
+                      {isActive && (
+                        <span className="ml-1.5 font-mono text-[9px] text-short">ACTIVE NOW</span>
+                      )}
+                    </div>
                   </div>
-                  <div className="mt-0.5 truncate text-[11px] text-paper/75" title={window.name}>
-                    {window.name}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
               {blackouts.data ? (
-                <div className="pt-1 text-[10px] text-fog/70">
+                <div className="pt-1 text-[11px] text-fog">
                   {blackouts.data.pre_minutes}m before / {blackouts.data.post_minutes}m after
                 </div>
               ) : null}
             </div>
           )}
         </Panel>
-      </div>
+        </div>
 
-      <AgentPanel />
-
+      {/* Main column: Symbol header + Candles */}
       <div className="min-w-0 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line/80 bg-ink-850/70 px-4 py-3 shadow-panel">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 min-w-0">
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-mono text-[18px] font-bold tracking-wide text-paper">
@@ -379,15 +408,22 @@ export default function Watchlist() {
               : "Loading closed bars…"
           }
           actions={
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => bars.refetch()}
-              loading={bars.isFetching}
-              title="Reload bars"
-            >
-              <RefreshIcon className="h-3.5 w-3.5" />
-            </Button>
+            <>
+              {analysis ? (
+                <span className="rounded border border-gold-500/30 bg-gold-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-gold-300 mr-2">
+                  Forecast overlay
+                </span>
+              ) : null}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => bars.refetch()}
+                loading={bars.isFetching}
+                title="Reload bars"
+              >
+                <RefreshIcon className="h-3.5 w-3.5" />
+              </Button>
+            </>
           }
           bodyClassName="p-2"
         >
@@ -398,7 +434,7 @@ export default function Watchlist() {
           ) : bars.data ? (
             <CandleChart
               bars={bars.data.bars}
-              blackouts={blackoutList}
+              blackouts={sortedBlackouts}
               analysis={analysis}
               timeframe={tf}
               digits={selected?.digits ?? 2}
@@ -411,12 +447,22 @@ export default function Watchlist() {
           )}
         </Panel>
 
+        {/* AgentPanel for mobile/tablet (stacked below chart) */}
+        <div className="lg:hidden space-y-3">
+          <AgentPanel />
+        </div>
+
         {!symbol ? (
           <EmptyState
             title="Add a symbol to begin"
             message="Adding a symbol calls MT5 Market Watch first, then stores the validated contract specification."
           />
         ) : null}
+      </div>
+
+      {/* Right column: AgentPanel */}
+      <div className="hidden min-w-0 space-y-3 lg:block xl:sticky xl:top-20">
+        <AgentPanel />
       </div>
 
       {drawerOpen ? (

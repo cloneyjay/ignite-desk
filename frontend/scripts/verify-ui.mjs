@@ -92,8 +92,21 @@ async function main() {
     });
   };
 
-  await step("portfolio", async () => {
+  await step("agent", async () => {
     await goto("/");
+    await waitForText("autonomous desk");
+    const commandInput = await page.$('textarea[placeholder*="Talk to Aegus"]');
+    if (!commandInput) throw new Error("agent composer missing");
+    await commandInput.type("What is my current risk?");
+    await page.keyboard.press("Enter");
+    await waitForText("open risk");
+    await goto("/");
+    await waitForText("open risk");
+    await shot("agent");
+  });
+
+  await step("portfolio", async () => {
+    await goto("/portfolio");
     await waitForText("equity growth");
     await page.waitForFunction(
       () => !document.body.innerText.includes("Loading account"),

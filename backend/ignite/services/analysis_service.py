@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import threading
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from backend.ignite.analysis.graph import (
@@ -99,6 +99,18 @@ def _worker(rt: Runtime, job: Job, horizon: int | None, samples: int) -> None:
         if equity <= 0:
             raise AnalysisError("account equity is not available")
 
+        bid, ask = rt.quote(job.symbol)
+        calendar_events: list[dict[str, Any]] = []
+        try:
+            now = datetime.now(timezone.utc)
+            calendar_events = rt.news.calendar(
+                now - timedelta(hours=2), now + timedelta(hours=2)
+            )
+        except Exception:
+            # Calendar availability is reported in the narrative and remains
+            # an execution guard; forecasting should still be inspectable.
+            calendar_events = []
+
         result = run_analysis(
             rt.mcp,
             rt.clock(),
@@ -110,6 +122,8 @@ def _worker(rt: Runtime, job: Job, horizon: int | None, samples: int) -> None:
             samples=samples,
             risk_config=rt.risk_config(),
             bars=bars,
+            realtime_price=(bid + ask) / 2.0,
+            calendar_events=calendar_events,
             progress=lambda step, message, pct: rt.job_progress(job, step, message, pct),
         )
         rt.store.save_analysis(result, rt.settings.draft_ttl_s)

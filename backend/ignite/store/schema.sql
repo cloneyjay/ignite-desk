@@ -293,3 +293,60 @@ CREATE TABLE IF NOT EXISTS agent_symbol_config (
     config_json TEXT NOT NULL,
     enabled     INTEGER NOT NULL DEFAULT 1
 );
+
+-- Scratchpad: TTL-based key-value store for agent working memory
+CREATE TABLE IF NOT EXISTS scratchpad (
+    key         TEXT PRIMARY KEY,
+    value_json  TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    expires_at  TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_scratchpad_expires
+    ON scratchpad (expires_at);
+
+-- Episodic memory: append-only episodes (trades, analyses, decisions)
+CREATE TABLE IF NOT EXISTS episodic_memory (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    type        TEXT NOT NULL,           -- trade, analysis, decision, reflection
+    symbol      TEXT,
+    timeframe   TEXT,
+    payload_json TEXT NOT NULL,
+    outcome     TEXT,                    -- profit, loss, neutral
+    tags_json   TEXT,                    -- JSON array of tags
+    created_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_episodic_symbol
+    ON episodic_memory (symbol);
+
+CREATE INDEX IF NOT EXISTS idx_episodic_type
+    ON episodic_memory (type);
+
+CREATE INDEX IF NOT EXISTS idx_episodic_created
+    ON episodic_memory (created_at);
+
+-- Semantic memory: pattern/knowledge store with tags
+CREATE TABLE IF NOT EXISTS semantic_memory (
+    key         TEXT PRIMARY KEY,
+    value_json  TEXT NOT NULL,
+    tags_json   TEXT,                    -- JSON array of tags
+    confidence  REAL DEFAULT 1.0,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_semantic_tags
+    ON semantic_memory (tags_json);
+
+-- Procedural memory: condition-action rules with confidence
+CREATE TABLE IF NOT EXISTS procedural_memory (
+    trigger     TEXT PRIMARY KEY,
+    action      TEXT NOT NULL,
+    condition_json TEXT NOT NULL,
+    confidence  REAL DEFAULT 1.0,
+    use_count   INTEGER DEFAULT 0,
+    success_count INTEGER DEFAULT 0,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);

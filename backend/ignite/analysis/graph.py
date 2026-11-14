@@ -18,7 +18,13 @@ import pandas as pd
 
 from backend.ignite.analysis import features as feat
 from backend.ignite.analysis.risk import DraftPlan, RiskConfig, SymbolSpec, plan
-from backend.ignite.analysis.signal import Signal, SignalConfig, Side, evaluate
+from backend.ignite.analysis.signal import (
+    Signal,
+    SignalConfig,
+    Side,
+    evaluate,
+    validate_against_desk,
+)
 from backend.ignite.forecasting.client import ForecastClient
 from backend.ignite.market.bars import fetch_bars, future_timestamps
 from backend.ignite.market.symbols import calc_margin, calc_profit, get_spec, quote
@@ -134,6 +140,8 @@ def run_analysis(
     signal_config: SignalConfig = SignalConfig(),
     risk_config: RiskConfig = RiskConfig(),
     bars: pd.DataFrame | None = None,
+    realtime_price: float | None = None,
+    calendar_events: list[dict[str, object]] | None = None,
     progress: Progress | None = None,
 ) -> AnalysisResult:
     if timeframe not in DEFAULT_LOOKBACK:
@@ -168,6 +176,15 @@ def run_analysis(
 
     _tick(progress, "signal", "evaluating signal.v1", 85)
     signal = evaluate(paths, features.last_close, features.atr, signal_config)
+    if realtime_price is not None:
+        signal = validate_against_desk(
+            signal,
+            trend=features.trend,
+            last_close=features.last_close,
+            realtime_price=realtime_price,
+            atr=features.atr,
+            calendar_events=calendar_events,
+        )
 
     draft: DraftPlan | None = None
     draft_id: str | None = None

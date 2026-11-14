@@ -807,6 +807,249 @@ class ToolRegistry:
             )
         )
 
+        # Memory tools (read/prepare permissions)
+        self._register(
+            ToolSpec(
+                name="scratchpad.write",
+                permission="prepare",
+                description="Write to agent scratchpad with optional TTL",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "key": {"type": "string"},
+                        "value": {"type": "object"},
+                        "ttl_seconds": {"type": "integer", "minimum": 1},
+                    },
+                    "required": ["key", "value"],
+                    "additionalProperties": False,
+                },
+                output_schema={
+                    "type": "object",
+                    "properties": {"ok": {"type": "boolean"}, "key": {"type": "string"}},
+                    "required": ["ok", "key"],
+                    "additionalProperties": False,
+                },
+                timeout_s=2.0,
+                handler=self._scratchpad_write,
+            )
+        )
+        self._register(
+            ToolSpec(
+                name="scratchpad.read",
+                permission="read",
+                description="Read from agent scratchpad",
+                input_schema={
+                    "type": "object",
+                    "properties": {"key": {"type": "string"}},
+                    "required": ["key"],
+                    "additionalProperties": False,
+                },
+                output_schema={
+                    "type": "object",
+                    "properties": {"ok": {"type": "boolean"}, "key": {"type": "string"}, "value": {"type": "object"}},
+                    "required": ["ok", "key"],
+                    "additionalProperties": False,
+                },
+                timeout_s=1.0,
+                handler=self._scratchpad_read,
+            )
+        )
+        self._register(
+            ToolSpec(
+                name="scratchpad.delete",
+                permission="prepare",
+                description="Delete a key from agent scratchpad",
+                input_schema={
+                    "type": "object",
+                    "properties": {"key": {"type": "string"}},
+                    "required": ["key"],
+                    "additionalProperties": False,
+                },
+                output_schema={
+                    "type": "object",
+                    "properties": {"ok": {"type": "boolean"}, "key": {"type": "string"}},
+                    "required": ["ok", "key"],
+                    "additionalProperties": False,
+                },
+                timeout_s=1.0,
+                handler=self._scratchpad_delete,
+            )
+        )
+
+        self._register(
+            ToolSpec(
+                name="episodic.record",
+                permission="prepare",
+                description="Record an episode (trade, analysis, decision, reflection)",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "type": {"type": "string", "enum": ["trade", "analysis", "decision", "reflection"]},
+                        "payload": {"type": "object"},
+                        "symbol": {"type": "string"},
+                        "timeframe": {"type": "string"},
+                        "outcome": {"type": "string"},
+                        "tags": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["type", "payload"],
+                    "additionalProperties": False,
+                },
+                output_schema={
+                    "type": "object",
+                    "properties": {"ok": {"type": "boolean"}, "episode_id": {"type": "integer"}},
+                    "required": ["ok", "episode_id"],
+                    "additionalProperties": False,
+                },
+                timeout_s=2.0,
+                handler=self._episodic_record,
+            )
+        )
+        self._register(
+            ToolSpec(
+                name="episodic.query",
+                permission="read",
+                description="Query episodic memory with filters",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "symbol": {"type": "string"},
+                        "type": {"type": "string"},
+                        "timeframe": {"type": "string"},
+                        "limit": {"type": "integer", "default": 100, "minimum": 1},
+                        "since": {"type": "string"},
+                    },
+                    "additionalProperties": False,
+                },
+                output_schema={
+                    "type": "object",
+                    "properties": {"ok": {"type": "boolean"}, "episodes": {"type": "array"}, "count": {"type": "integer"}},
+                    "required": ["ok", "episodes", "count"],
+                    "additionalProperties": False,
+                },
+                timeout_s=2.0,
+                handler=self._episodic_query,
+            )
+        )
+
+        self._register(
+            ToolSpec(
+                name="semantic.remember",
+                permission="prepare",
+                description="Store a pattern/knowledge entry with tags",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "key": {"type": "string"},
+                        "value": {"type": "object"},
+                        "tags": {"type": "array", "items": {"type": "string"}},
+                        "confidence": {"type": "number", "minimum": 0, "maximum": 1, "default": 1.0},
+                    },
+                    "required": ["key", "value"],
+                    "additionalProperties": False,
+                },
+                output_schema={
+                    "type": "object",
+                    "properties": {"ok": {"type": "boolean"}, "key": {"type": "string"}},
+                    "required": ["ok", "key"],
+                    "additionalProperties": False,
+                },
+                timeout_s=2.0,
+                handler=self._semantic_remember,
+            )
+        )
+        self._register(
+            ToolSpec(
+                name="semantic.recall",
+                permission="read",
+                description="Recall patterns matching query and/or tags",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "default": ""},
+                        "tags": {"type": "array", "items": {"type": "string"}},
+                        "limit": {"type": "integer", "default": 10, "minimum": 1},
+                    },
+                    "additionalProperties": False,
+                },
+                output_schema={
+                    "type": "object",
+                    "properties": {"ok": {"type": "boolean"}, "results": {"type": "array"}, "count": {"type": "integer"}},
+                    "required": ["ok", "results", "count"],
+                    "additionalProperties": False,
+                },
+                timeout_s=2.0,
+                handler=self._semantic_recall,
+            )
+        )
+
+        self._register(
+            ToolSpec(
+                name="procedural.learn",
+                permission="prepare",
+                description="Learn or update a procedural rule (condition-action)",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "trigger": {"type": "string"},
+                        "action": {"type": "string"},
+                        "condition": {"type": "object"},
+                        "confidence": {"type": "number", "minimum": 0, "maximum": 1, "default": 1.0},
+                    },
+                    "required": ["trigger", "action", "condition"],
+                    "additionalProperties": False,
+                },
+                output_schema={
+                    "type": "object",
+                    "properties": {"ok": {"type": "boolean"}, "trigger": {"type": "string"}},
+                    "required": ["ok", "trigger"],
+                    "additionalProperties": False,
+                },
+                timeout_s=2.0,
+                handler=self._procedural_learn,
+            )
+        )
+        self._register(
+            ToolSpec(
+                name="procedural.recall",
+                permission="read",
+                description="Recall a procedural rule by trigger",
+                input_schema={
+                    "type": "object",
+                    "properties": {"trigger": {"type": "string"}},
+                    "required": ["trigger"],
+                    "additionalProperties": False,
+                },
+                output_schema={
+                    "type": "object",
+                    "properties": {"ok": {"type": "boolean"}, "result": {"type": "object"}},
+                    "required": ["ok", "result"],
+                    "additionalProperties": False,
+                },
+                timeout_s=1.0,
+                handler=self._procedural_recall,
+            )
+        )
+        self._register(
+            ToolSpec(
+                name="procedural.query",
+                permission="read",
+                description="Query all procedural rules",
+                input_schema={
+                    "type": "object",
+                    "properties": {"limit": {"type": "integer", "default": 100, "minimum": 1}},
+                    "additionalProperties": False,
+                },
+                output_schema={
+                    "type": "object",
+                    "properties": {"ok": {"type": "boolean"}, "results": {"type": "array"}, "count": {"type": "integer"}},
+                    "required": ["ok", "results", "count"],
+                    "additionalProperties": False,
+                },
+                timeout_s=2.0,
+                handler=self._procedural_query,
+            )
+        )
+
     def _register(self, spec: ToolSpec) -> None:
         self._tools[spec.name] = spec
 
@@ -1090,3 +1333,79 @@ class ToolRegistry:
 
     async def _chat_respond(self, rt: Runtime, args: dict[str, Any]) -> dict[str, Any]:
         return {"ack": True}
+
+    # ============================================================
+    # Memory tools
+    # ============================================================
+
+    async def _scratchpad_write(self, rt: Runtime, args: dict[str, Any]) -> dict[str, Any]:
+        key = args["key"]
+        value = args["value"]
+        ttl = args.get("ttl_seconds")
+        rt.store.scratchpad_write(key, value, ttl)
+        return {"ok": True, "key": key}
+
+    async def _scratchpad_read(self, rt: Runtime, args: dict[str, Any]) -> dict[str, Any]:
+        key = args["key"]
+        value = rt.store.scratchpad_read(key)
+        return {"ok": True, "key": key, "value": value}
+
+    async def _scratchpad_delete(self, rt: Runtime, args: dict[str, Any]) -> dict[str, Any]:
+        key = args["key"]
+        rt.store.scratchpad_delete(key)
+        return {"ok": True, "key": key}
+
+    async def _episodic_record(self, rt: Runtime, args: dict[str, Any]) -> dict[str, Any]:
+        episode_id = rt.store.episodic_record(
+            type=args["type"],
+            payload=args["payload"],
+            symbol=args.get("symbol"),
+            timeframe=args.get("timeframe"),
+            outcome=args.get("outcome"),
+            tags=args.get("tags"),
+        )
+        return {"ok": True, "episode_id": episode_id}
+
+    async def _episodic_query(self, rt: Runtime, args: dict[str, Any]) -> dict[str, Any]:
+        episodes = rt.store.episodic_query(
+            symbol=args.get("symbol"),
+            type=args.get("type"),
+            timeframe=args.get("timeframe"),
+            limit=args.get("limit", 100),
+            since=args.get("since"),
+        )
+        return {"ok": True, "episodes": episodes, "count": len(episodes)}
+
+    async def _semantic_remember(self, rt: Runtime, args: dict[str, Any]) -> dict[str, Any]:
+        rt.store.semantic_remember(
+            key=args["key"],
+            value=args["value"],
+            tags=args.get("tags"),
+            confidence=args.get("confidence", 1.0),
+        )
+        return {"ok": True, "key": args["key"]}
+
+    async def _semantic_recall(self, rt: Runtime, args: dict[str, Any]) -> dict[str, Any]:
+        results = rt.store.semantic_recall(
+            query=args.get("query", ""),
+            tags=args.get("tags"),
+            limit=args.get("limit", 10),
+        )
+        return {"ok": True, "results": results, "count": len(results)}
+
+    async def _procedural_learn(self, rt: Runtime, args: dict[str, Any]) -> dict[str, Any]:
+        rt.store.procedural_learn(
+            trigger=args["trigger"],
+            action=args["action"],
+            condition=args["condition"],
+            confidence=args.get("confidence", 1.0),
+        )
+        return {"ok": True, "trigger": args["trigger"]}
+
+    async def _procedural_recall(self, rt: Runtime, args: dict[str, Any]) -> dict[str, Any]:
+        result = rt.store.procedural_recall(args["trigger"])
+        return {"ok": True, "result": result}
+
+    async def _procedural_query(self, rt: Runtime, args: dict[str, Any]) -> dict[str, Any]:
+        results = rt.store.procedural_query(args.get("limit", 100))
+        return {"ok": True, "results": results, "count": len(results)}
