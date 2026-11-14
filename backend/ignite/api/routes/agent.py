@@ -1048,6 +1048,137 @@ def close_agent_position(ticket: str, rt: Runtime = Depends(get_rt)) -> dict[str
     return {"ok": result.ok, "result": {"code": result.code, "detail": result.detail}}
 
 
+# ------------------------------------------------------------------ strategies
+class StrategyPromoteRequest(BaseModel):
+    target: str  # shadow | demo | live
+    confirm: bool
+
+
+class StrategyDemoteRequest(BaseModel):
+    confirm: bool
+
+
+VALID_PROMOTION_PATHS = {
+    "shadow": "demo",
+    "demo": "live",
+}
+VALID_DEMOTION_PATHS = {
+    "live": "demo",
+    "demo": "shadow",
+    "shadow": "backtested",
+    "backtested": "compiled",
+    "compiled": "draft",
+}
+
+
+@router.get("/agent/strategies")
+def agent_strategies(rt: Runtime = Depends(get_rt)) -> dict[str, Any]:
+    """List all strategies with their current status."""
+    strategies = rt.store.list_strategies()
+    return {"strategies": strategies, "count": len(strategies)}
+
+
+@router.get("/agent/strategies/{strategy_id}")
+def agent_strategy_get(strategy_id: str, rt: Runtime = Depends(get_rt)) -> dict[str, Any]:
+    """Get strategy details and backtest results."""
+    strategy = rt.store.get_strategy(strategy_id)
+    if not strategy:
+        raise ApiError(404, "not_found", f"no strategy {strategy_id}")
+    backtests = rt.store.list_strategy_backtests(strategy_id)
+    return {"strategy": strategy, "backtests": backtests}
+
+
+@router.post("/agent/strategies/{strategy_id}/promote")
+def agent_strategy_promote(
+    strategy_id: str, body: StrategyPromoteRequest, rt: Runtime = Depends(get_rt)
+) -> dict[str, Any]:
+    """Promote strategy execution mode: shadow → demo → live."""
+    strategy = rt.store.get_strategy(strategy_id)
+    if not strategy:
+        raise ApiError(404, "not_found", f"no strategy {strategy_id}")
+
+    current = strategy["status"]
+    target = body.target
+
+    # Validate promotion path
+    if current not in VALID_PROMOTION_PATHS:
+        raise ApiError(
+            400,
+            "invalid_promotion",
+            f"cannot promote from {current} (not in shadow/demo)",
+        )
+    if VALID_PROMOTION_PATHS[current] != target:
+        raise ApiError(
+            400,
+            "invalid_promotion",
+            f"cannot promote from {current} to {target} (next is {VALID_PROMOTION_PATHS[current]})",
+        )
+
+    # Confirmation required
+    if not body.confirm:
+        raise ApiError(400, "confirmation_required", "confirmation required to promote")
+
+    # Live promotion requires account number
+    if target == "live" and not body.confirm:
+        raise ApiError(400, "account_required", "live promotion requires confirmation")
+
+    # Update strategy status
+    rt.store.update_strategy(strategy_id, {"status": target})
+
+    rt.store.audit(
+        "api",
+        "strategy_promoted",
+        {"strategy_id": strategy_id, "from": current, "to": target},
+        "ok",
+    )
+
+    return {
+        "ok": True,
+        "strategy_id": strategy_id,
+        "from": current,
+        "to": target,
+    }
+
+
+@router.post("/agent/strategies/{strategy_id}/demote")
+def agent_strategy_demote(
+    strategy_id: str, body: StrategyDemoteRequest, rt: Runtime = Depends(get_rt)
+) -> dict[str, Any]:
+    """Demote strategy execution mode: live → demo → shadow → backtested."""
+    strategy = rt.store.get_strategy(strategy_id)
+    if not strategy:
+        raise ApiError(404, "not_found", f"no strategy {strategy_id}")
+
+    current = strategy["status"]
+
+    if current not in VALID_DEMOTION_PATHS:
+        raise ApiError(
+            400,
+            "invalid_demotion",
+            f"cannot demote from {current}",
+        )
+
+    if not body.confirm:
+        raise ApiError(400, "confirmation_required", "confirmation required to demote")
+
+    target = VALID_DEMOTION_PATHS[current]
+    rt.store.update_strategy(strategy_id, {"status": target})
+
+    rt.store.audit(
+        "api",
+        "strategy_demoted",
+        {"strategy_id": strategy_id, "from": current, "to": target},
+        "ok",
+    )
+
+    return {
+        "ok": True,
+        "strategy_id": strategy_id,
+        "from": current,
+        "to": target,
+    }
+
+
 @router.get("/agent/config")
 def agent_config_get(rt: Runtime = Depends(get_rt)) -> dict[str, Any]:
     return rt.config().__dict__
