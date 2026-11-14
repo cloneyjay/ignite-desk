@@ -277,8 +277,13 @@ class DeskRouter:
 
     # ------------------------------------------------------------------ handlers
 
-    def _handle_brief(self, route: DeskRoute) -> DeskResponse:
-        """Market awareness: can I trade right now? What's the outlook?"""
+    def _handle_brief(self, route: DeskRoute) -> DeskRoute:
+        """Market awareness: can I trade right now? What's the outlook?
+
+        Always runs the Analyst so the user gets a market outlook even when
+        the market is closed (e.g. weekend). Session status is reported first,
+        then the outlook.
+        """
         session = self.session_guard.evaluate()
         symbol = route.symbol or "XAUUSD"
 
@@ -290,35 +295,125 @@ class DeskRouter:
             for reason in session.reasons:
                 lines.append(f"• {reason}")
 
-        # Add live quote if terminal connected
-        if session.terminal_connected:
-            try:
-                bid, ask = self.rt.quote(symbol)
-                spread = self.rt.spread(symbol)
-                lines.append(
-                    f"Live quote: bid {bid:.2f}, ask {ask:.2f}, spread {spread:.0f} pts."
-                )
-            except Exception:  # noqa: BLE001
-                lines.append("Live quote unavailable.")
+        # Always gather live market data for the outlook, even when closed.
+        try:
+            result = self.analyst.assess(symbol, "M15")
+        except Exception as exc:  # noqa: BLE001
+            return DeskResponse(
+                narrative=(
+                    " ".join(lines)
+                    + f" I couldn't pull market data for the outlook: {exc}."
+                ),
+                tool_calls=[
+                    {
+                        "name": "session.evaluate",
+                        "arguments": {},
+                        "result": {
+                            "tradable": session.tradable,
+                            "reasons": session.reasons,
+                        },
+                    }
+                ],
+                structured={
+                    "kind": "brief",
+                    "symbol": symbol,
+                    "tradable": session.tradable,
+                    "reasons": session.reasons,
+                },
+                route=route,
+            )
+
+        quote = result.data.get("quote", {}) or {}
+        structure = result.data.get("structure", {}) or {}
+        calendar = result.data.get("calendar", []) or []
+        forecast = result.data.get("forecast", {}) or {}
+
+        bid = quote.get("bid")
+        ask = quote.get("ask")
+        spread = quote.get("spread")
+        if bid is not None and ask is not None:
+            lines.append(
+                f"Live quote: bid {bid:.2f}, ask {ask:.2f}, "
+                f"spread {spread:.0f} pts."
+            )
+
+        trend = structure.get("trend", "unknown")
+        last_close = structure.get("last_close")
+        atr = structure.get("atr")
+        vwap = structure.get("vwap")
+        price_vs_vwap = structure.get("price_vs_vwap")
+        recent_high = structure.get("recent_high")
+        recent_low = structure.get("recent_low")
+
+        lines.append(
+            f"Structure: {trend} trend, last close {last_close:.2f}, "
+            f"ATR14 {atr:.2f}, price {price_vs_vwap} VWAP ({vwap:.2f})."
+        )
+        if recent_high and recent_low:
+            lines.append(
+                f"Recent range: {recent_low:.2f}–{recent_high:.2f}."
+            )
+
+        p_up = result.p_up
+        edge_atr = result.edge_atr
+        lines.append(
+            f"Kronos: p_up {p_up:.0%}, edge {edge_atr:+.2f} ATR → "
+            f"{'bullish bias' if p_up > 0.55 else 'bearish bias' if p_up < 0.45 else 'neutral'}."
+        )
+
+        high_impact = [
+            e for e in calendar
+            if str(e.get("importance", "")).lower() == "high"
+        ]
+        if high_impact:
+            names = ", ".join(e.get("name", "event") for e in high_impact[:3])
+            lines.append(f"High-impact news ahead: {names}.")
+
+        if not session.tradable:
+            lines.append(
+                "The market is closed, so no new entries can be sent until "
+                "session reopens and guards clear. Use this outlook to plan "
+                "your entries for next week."
+            )
 
         narrative = " ".join(lines)
+
+        tool_calls = [
+            {
+                "name": "session.evaluate",
+                "arguments": {},
+                "result": {
+                    "tradable": session.tradable,
+                    "reasons": session.reasons,
+                },
+            },
+            {
+                "name": "analyst.assess",
+                "arguments": {"symbol": symbol, "timeframe": "M15"},
+                "result": {
+                    "symbol": result.symbol,
+                    "timeframe": result.timeframe,
+                    "signal": result.signal,
+                    "p_up": result.p_up,
+                    "edge_atr": result.edge_atr,
+                    "draft_id": result.draft_id,
+                    "rationale": result.rationale,
+                },
+            },
+        ]
+
         return DeskResponse(
             narrative=narrative,
-            tool_calls=[
-                {
-                    "name": "session.evaluate",
-                    "arguments": {},
-                    "result": {
-                        "tradable": session.tradable,
-                        "reasons": session.reasons,
-                    },
-                }
-            ],
+            tool_calls=tool_calls,
             structured={
                 "kind": "brief",
                 "symbol": symbol,
                 "tradable": session.tradable,
                 "reasons": session.reasons,
+                "signal": result.signal,
+                "p_up": result.p_up,
+                "edge_atr": result.edge_atr,
+                "draft_id": result.draft_id,
             },
             route=route,
         )
