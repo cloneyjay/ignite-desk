@@ -21,11 +21,17 @@ from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
+import uuid
 
 from backend.ignite.agent.kronos_signal import KronosSignal, analyse_paths
+from backend.ignite.agent.analyst import Analyst
+from backend.ignite.agent.execution_desk import ExecutionDesk
+from backend.ignite.agent.session import SessionGuard
 from backend.ignite.agent.intelligence.regime import RegimeClassifier
 from backend.ignite.agent.intelligence.risk_intel import RiskIntel
 from backend.ignite.agent.intelligence.market_intel import MarketIntel
+from backend.ignite.agent.reasoning.planner import Planner
+from backend.ignite.agent.reasoning.reflector import Reflector
 from backend.ignite.services.runtime import Runtime
 
 
@@ -59,6 +65,8 @@ class ResearcherVerdict:
     conviction: float  # 0.0 to 1.0
     kronos_signal: KronosSignal
     reasons: tuple[str, ...]
+    regime: str | None = None
+    regime_confidence: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -106,9 +114,14 @@ class DebateEngine:
 
     def __init__(self, rt: Runtime) -> None:
         self.rt = rt
+        self.analyst = Analyst(rt)
+        self.execution_desk = ExecutionDesk(rt)
+        self.session_guard = SessionGuard(rt)
         self.risk_intel = RiskIntel(rt)
         self.regime_classifier = RegimeClassifier(rt)
         self.market_intel = MarketIntel(rt)
+        self.planner = Planner(rt)
+        self.reflector = Reflector(rt)
 
     def debate(
         self,
@@ -123,6 +136,18 @@ class DebateEngine:
 
         trace: list[str] = []
         trace.append(f"=== Debate: {symbol} {timeframe} ===")
+
+        # ---- Planner: decompose the decision into steps ----
+        try:
+            plan = self.planner.create_plan(
+                f"Analyse {symbol} {timeframe} and decide whether to enter a trade"
+            )
+            trace.append(f"[Planner] Plan {plan.plan_id[:8]}: {len(plan.steps)} steps")
+            for i, step in enumerate(plan.steps):
+                trace.append(f"  Step {i+1}: {step.tool} → {step.expected_outcome}")
+        except Exception:  # noqa: BLE001
+            plan = None
+            trace.append("[Planner] Planning unavailable — proceeding directly")
 
         # ---- Researcher: Kronos + market structure + news ----
         kronos_signal = analyse_paths(paths, last_close, atr)
@@ -206,6 +231,32 @@ class DebateEngine:
             symbol, timeframe, researcher, strategist, risk, final_lots
         )
 
+        # ---- Reflector: record decision for post-trade learning ----
+        try:
+            decision_id = uuid.uuid4().hex
+            self.reflector.reflect(
+                decision_id=decision_id,
+                outcome="proposed",
+                context={
+                    "symbol": symbol,
+                    "timeframe": timeframe,
+                    "side": strategist.side,
+                    "lots": final_lots,
+                    "entry": strategist.entry,
+                    "sl": strategist.sl,
+                    "tp": strategist.tp,
+                    "signal_side": researcher.kronos_signal.side,
+                    "p_up": researcher.kronos_signal.p_up,
+                    "edge_atr": researcher.kronos_signal.edge_atr,
+                    "regime": researcher.regime or "unknown",
+                    "regime_confidence": researcher.regime_confidence,
+                    "risk_pct": strategist.risk_pct,
+                    "expected_rr": strategist.expected_rr,
+                },
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
         return ExecutorDecision(
             action="enter",
             symbol=symbol,
@@ -265,7 +316,7 @@ class DebateEngine:
                 conviction = min(1.0, conviction + 0.05)
                 reasons.append("trending regime — slight conviction boost")
         except Exception:  # noqa: BLE001
-            pass
+            regime = None
 
         # Trend cross-check (legacy context.trend as fallback)
         if context.trend == "up" and kronos_signal.side == "long":
@@ -296,6 +347,8 @@ class DebateEngine:
             bias=bias,
             conviction=conviction,
             kronos_signal=kronos_signal,
+            regime=regime.regime if regime else None,
+            regime_confidence=regime.confidence if regime else 0.0,
             reasons=tuple(dict.fromkeys(reasons)),
         )
 
