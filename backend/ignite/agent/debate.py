@@ -23,6 +23,9 @@ from typing import Literal
 import numpy as np
 
 from backend.ignite.agent.kronos_signal import KronosSignal, analyse_paths
+from backend.ignite.agent.intelligence.regime import RegimeClassifier
+from backend.ignite.agent.intelligence.risk_intel import RiskIntel
+from backend.ignite.agent.intelligence.market_intel import MarketIntel
 from backend.ignite.services.runtime import Runtime
 
 
@@ -103,6 +106,9 @@ class DebateEngine:
 
     def __init__(self, rt: Runtime) -> None:
         self.rt = rt
+        self.risk_intel = RiskIntel(rt)
+        self.regime_classifier = RegimeClassifier(rt)
+        self.market_intel = MarketIntel(rt)
 
     def debate(
         self,
@@ -229,19 +235,45 @@ class DebateEngine:
         reasons.append(f"Kronos regime {kronos_signal.regime}")
         reasons.append(f"Kronos confidence {kronos_signal.confidence:.0%}")
 
-        # Trend cross-check
+        # Multi-timeframe structure confirmation via MarketIntel
+        try:
+            mtf = self.market_intel.synthesize(context.symbol, context.timeframe)
+            mtf_trend = mtf.get("trend_consensus", "neutral")
+            if mtf_trend == "bullish" and kronos_signal.side == "long":
+                conviction = min(1.0, conviction + 0.10)
+                reasons.append("multi-TF trend aligns with Kronos long bias")
+            elif mtf_trend == "bearish" and kronos_signal.side == "short":
+                conviction = min(1.0, conviction + 0.10)
+                reasons.append("multi-TF trend aligns with Kronos short bias")
+            elif mtf_trend == "bullish" and kronos_signal.side == "short":
+                conviction = max(0.0, conviction - 0.20)
+                reasons.append("multi-TF trend opposes Kronos short bias")
+            elif mtf_trend == "bearish" and kronos_signal.side == "long":
+                conviction = max(0.0, conviction - 0.20)
+                reasons.append("multi-TF trend opposes Kronos long bias")
+        except Exception:  # noqa: BLE001
+            pass  # Multi-timeframe data unavailable; proceed with Kronos only
+
+        # Regime classification via RegimeClassifier
+        try:
+            regime = self.regime_classifier.classify(context.symbol, context.timeframe)
+            reasons.append(f"regime={regime.regime} (conf {regime.confidence:.0%})")
+            if regime.regime == "volatile":
+                conviction = max(0.0, conviction - 0.15)
+                reasons.append("volatile regime — reducing conviction")
+            elif regime.regime in ("trend_up", "trend_down"):
+                conviction = min(1.0, conviction + 0.05)
+                reasons.append("trending regime — slight conviction boost")
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Trend cross-check (legacy context.trend as fallback)
         if context.trend == "up" and kronos_signal.side == "long":
-            conviction = min(1.0, conviction + 0.10)
-            reasons.append("trend aligns with Kronos long bias")
+            conviction = min(1.0, conviction + 0.05)
+            reasons.append("context trend aligns with Kronos long bias")
         elif context.trend == "down" and kronos_signal.side == "short":
-            conviction = min(1.0, conviction + 0.10)
-            reasons.append("trend aligns with Kronos short bias")
-        elif context.trend == "up" and kronos_signal.side == "short":
-            conviction = max(0.0, conviction - 0.20)
-            reasons.append("trend opposes Kronos short bias")
-        elif context.trend == "down" and kronos_signal.side == "long":
-            conviction = max(0.0, conviction - 0.20)
-            reasons.append("trend opposes Kronos long bias")
+            conviction = min(1.0, conviction + 0.05)
+            reasons.append("context trend aligns with Kronos short bias")
 
         # News blackout check
         if context.news_blackout:
@@ -332,10 +364,9 @@ class DebateEngine:
     def _risk_manager(
         self, strategist: StrategistProposal, context: DebateContext
     ) -> RiskManagerVerdict:
-        """Risk manager validates against all guards."""
-        checks: list[str] = []
+        """Risk manager validates against all guards using RiskIntel."""
 
-        # Kill switch
+        # ---- Kill switch ----
         if context.kill_switch:
             return RiskManagerVerdict(
                 approved=False,
@@ -344,7 +375,7 @@ class DebateEngine:
                 checks=("kill switch engaged",),
             )
 
-        # Daily loss limit
+        # ---- Daily loss limit ----
         if context.daily_pnl <= -context.daily_loss_limit:
             return RiskManagerVerdict(
                 approved=False,
@@ -356,18 +387,31 @@ class DebateEngine:
                 ),
             )
 
-        # Daily loss approaching (warning, reduce size)
-        approaching = context.daily_pnl <= -context.daily_loss_limit * 0.8
-        if approaching:
-            checks.append(
-                f"daily PnL {context.daily_pnl:.2f} approaching limit — "
-                "reducing size by 50%"
-            )
-            adjusted_lots = strategist.lots * 0.5
-        else:
-            adjusted_lots = strategist.lots
+        # ---- Regime classification ----
+        try:
+            regime = self.regime_classifier.classify(context.symbol, context.timeframe)
+        except Exception:  # noqa: BLE001
+            regime = None
 
-        # Max concurrent positions
+        # ---- Risk decomposition for open positions ----
+        try:
+            positions = self.rt.positions(context.symbol)
+            risk_decomp = self.risk_intel.decompose(positions)
+        except Exception:  # noqa: BLE001
+            positions = []
+            risk_decomp = None
+
+        checks: list[str] = []
+        if regime:
+            checks.append(f"regime={regime.regime} (confidence {regime.confidence:.0%})")
+        if risk_decomp:
+            checks.append(
+                f"portfolio risk {risk_decomp.risk_pct:.2%} "
+                f"(correlation {risk_decomp.correlation_risk:.2f}, "
+                f"concentration {risk_decomp.concentration_risk:.2f})"
+            )
+
+        # ---- Max concurrent positions ----
         if context.open_positions >= context.max_positions:
             return RiskManagerVerdict(
                 approved=False,
@@ -379,7 +423,7 @@ class DebateEngine:
                 ),
             )
 
-        # Spread guard
+        # ---- Spread guard ----
         if context.spread_points > context.max_spread_points:
             return RiskManagerVerdict(
                 approved=False,
@@ -391,7 +435,7 @@ class DebateEngine:
                 ),
             )
 
-        # News blackout — block entries entirely
+        # ---- News blackout — block entries entirely ----
         if context.news_blackout:
             return RiskManagerVerdict(
                 approved=False,
@@ -400,25 +444,49 @@ class DebateEngine:
                 checks=("high-impact news blackout",),
             )
 
-        # Risk per trade cap
-        if strategist.risk_pct > 0.05:
+        # ---- Dynamic position sizing via RiskIntel ----
+        try:
+            sizing = self.risk_intel.size(
+                context.symbol, strategist.side, signal_strength=researcher.conviction
+            )
+        except Exception:  # noqa: BLE001
+            sizing = None
+
+        # Check if sized lots exceed strategist's proposed lots
+        lots = min(strategist.lots, sizing.size) if sizing else strategist.lots
+
+        if lots <= 0:
             return RiskManagerVerdict(
                 approved=False,
-                blocked_reason="risk per trade exceeds 5% cap",
+                blocked_reason="dynamic sizing resulted in zero lots",
                 adjusted_lots=None,
-                checks=(f"risk {strategist.risk_pct:.2%} > 5% cap",),
+                checks=(
+                    f"regime={regime.regime if regime else 'unknown'}, "
+                    f"corr_pen={sizing.correlation_penalty:.2f if sizing else 0.0}, "
+                    f"vol_scale={sizing.volatility_scaling:.2f if sizing else 0.0}",
+                ),
             )
 
-        checks.append(
-            f"risk {strategist.risk_pct:.2%} of equity within limits"
+        risk_usd = abs(strategist.entry - strategist.sl) * lots * 100.0
+        risk_pct_actual = risk_usd / context.equity if context.equity > 0 else 0.0
+
+        rr = (
+            abs(strategist.tp - strategist.entry) / abs(strategist.entry - strategist.sl)
+            if abs(strategist.entry - strategist.sl) > 0
+            else 0.0
         )
-        checks.append(f"stop distance {abs(strategist.entry-strategist.sl):.2f} pts")
-        checks.append(f"expected R:R {strategist.expected_rr:.2f}")
+
+        checks.append(
+            f"dynamic size {lots:.2f} lots (risk {risk_pct_actual:.2%}, "
+            f"regime mult {sizing.regime_multiplier:.2f})"
+            if sizing
+            else f"risk {risk_pct_actual:.2%}"
+        )
 
         return RiskManagerVerdict(
             approved=True,
             blocked_reason=None,
-            adjusted_lots=round(adjusted_lots, 2),
+            adjusted_lots=lots,
             checks=tuple(checks),
         )
 
