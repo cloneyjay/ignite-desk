@@ -157,7 +157,11 @@ class UnifiedChatAgent:
 
             if not result.tool_calls:
                 return ChatResponse(
-                    narrative=result.text or "I'm not sure how to help with that. Try asking about a symbol or your positions.",
+                    narrative=(
+                        result.text
+                        or "I'm here — how can I help? Try asking about your positions, "
+                        "risk, or a market brief (e.g. \"brief me on XAUUSD\")."
+                    ),
                     tool_calls=tool_call_records,
                     structured=structured,
                 )

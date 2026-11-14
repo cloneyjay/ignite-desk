@@ -691,6 +691,24 @@ def _fallback_deterministic(rt: Runtime, text: str) -> ChatResponse:
     text_lower = text.lower()
     tool_calls: list[dict[str, Any]] = []
 
+    # Greetings and general conversation — respond warmly without the model
+    greetings = [
+        r"\b(hi|hello|hey|hey there|good morning|good afternoon|good evening|hey aegus|hi aegus|hello aegus)\b",
+    ]
+    if any(re.search(p, text_lower) for p in greetings):
+        return ChatResponse(
+            narrative=(
+                "Hello! I'm Aegus, your AI day-trading desk companion for XAUUSD. "
+                "I'm currently running without the language model, so I can give you "
+                "live market reads, account info, and position updates — but I can't "
+                "generate full analyses or explanations right now. "
+                "Ask me about your positions, risk, or a market brief (e.g. "
+                "\"brief me on XAUUSD\") and I'll pull live data from MT5."
+            ),
+            tool_calls=[],
+            structured={"kind": "greeting"},
+        )
+
     # Identity questions — answered even when the model is unreachable
     identity_triggers = [
         r"\bwho\s+are\s+you\b",
