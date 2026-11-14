@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from backend.ignite.agent.chat import ChatRoute, route_or_error
 from backend.ignite.agent.chat_agent import ChatResponse, UnifiedChatAgent
 from backend.ignite.agent.config import AgentConfig, AgentConfigPatch, ConfigError
+from backend.ignite.agent.desk_router import DeskRouter
 from backend.ignite.agent.runner import AgentError, AgentOutput, run_skill
 from backend.ignite.api.deps import get_rt
 from backend.ignite.api.errors import ApiError
@@ -822,7 +823,7 @@ def _fallback_deterministic(rt: Runtime, text: str) -> ChatResponse:
 def agent_chat(
     body: ChatRequest, rt: Runtime = Depends(get_rt)
 ) -> dict[str, Any]:
-    """Route a natural-language request through the unified chat agent."""
+    """Route a natural-language request through the desk router."""
     text = body.text.strip()
     if not text:
         raise ApiError(400, "empty_message", "message cannot be empty")
@@ -833,10 +834,15 @@ def agent_chat(
     history = rt.store.agent_messages(session["id"])[-12:]
 
     try:
-        agent = UnifiedChatAgent(rt)
-        response = agent.respond(session["id"], text, history)
-    except Exception as exc:  # noqa: BLE001 - LLM unavailable or other error
-        response = _fallback_deterministic(rt, text)
+        router = DeskRouter(rt)
+        response = router.route(text, history)
+    except Exception as exc:  # noqa: BLE001
+        fallback = _fallback_deterministic(rt, text)
+        response = ChatResponse(
+            narrative=fallback.narrative,
+            tool_calls=fallback.tool_calls,
+            structured=fallback.structured,
+        )
 
     # Save tool call messages
     for tool in response.tool_calls:
@@ -866,10 +872,10 @@ def agent_chat(
 
     output = {
         "run_id": decision_id,
-        "skill": "unified_chat_agent",
+        "skill": "desk_router",
         "subject": None,
         "narrative": response.narrative,
-        "provider": "nim",
+        "provider": "desk",
         "model": None,
         "status": "ok",
         "fallback": False,
@@ -881,7 +887,16 @@ def agent_chat(
     }
 
     return {
-        "route": {"skill": "unified_chat_agent", "args": {}, "confidence": 1.0},
+        "route": {
+            "skill": response.route.intent,
+            "args": {
+                "symbol": response.route.symbol,
+                "timeframe": response.route.timeframe,
+                "ticket": response.route.ticket,
+                "action": response.route.action,
+            },
+            "confidence": response.route.confidence,
+        },
         "output": output,
         "session_id": session["id"],
         "decision_id": decision_id,
