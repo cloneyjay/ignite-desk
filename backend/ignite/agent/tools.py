@@ -9,11 +9,12 @@ from __future__ import annotations
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import TypeAdapter
 
-from backend.ignite.services.runtime import Runtime
+if TYPE_CHECKING:
+    from backend.ignite.services.runtime import Runtime
 
 
 @dataclass(frozen=True)
@@ -26,7 +27,7 @@ class ToolSpec:
     input_schema: dict[str, Any]
     output_schema: dict[str, Any]
     timeout_s: float
-    handler: Callable[[Runtime, dict[str, Any]], Awaitable[dict[str, Any]]]
+    handler: "Callable[[Runtime, dict[str, Any]], Awaitable[dict[str, Any]]]"
 
     def to_openai(self) -> dict[str, Any]:
         """Convert to OpenAI tool schema format."""
