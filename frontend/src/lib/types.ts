@@ -603,6 +603,7 @@ export interface AgentChatResponse {
       rejected_text?: string | null;
     };
     error: string | null;
+    structured?: Record<string, unknown>;
   };
   session_id: string;
   tool_calls: AgentToolCall[];

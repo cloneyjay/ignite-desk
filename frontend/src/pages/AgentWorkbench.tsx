@@ -144,7 +144,7 @@ function ChatWorkspace({ streamStatus, activeId }: { streamStatus: StreamStatus;
   };
 
   return (
-    <div className="flex min-h-[calc(100vh-100px)] flex-col rounded-xl border border-line/80 bg-ink-900/50">
+    <div className="flex min-h-[calc(100vh-100px)] max-h-[calc(100vh-100px)] flex-col rounded-xl border border-line/80 bg-ink-900/50">
       <div className="flex items-center justify-between px-5 py-3 border-b border-line/70">
         <div className="text-[11px] uppercase tracking-[0.1em] text-text-faint">Conversation</div>
         <div className="text-[10px] font-mono uppercase">
@@ -159,7 +159,11 @@ function ChatWorkspace({ streamStatus, activeId }: { streamStatus: StreamStatus;
           <div className="text-center py-16 text-fog text-[12px]">No messages yet. Start a conversation.</div>
         )}
         {messages.data.map((m) => (
-          <MessageBubble key={m.id} message={m} />
+          <MessageBubble
+            key={m.id}
+            message={m}
+            onExecuteDraft={() => submit("execute that trade")}
+          />
         ))}
         {chat.isPending && <div className="text-[12px] text-gold-200">Agent is working…</div>}
       </div>
@@ -191,16 +195,149 @@ function ChatWorkspace({ streamStatus, activeId }: { streamStatus: StreamStatus;
   );
 }
 
-function MessageBubble({ message }: { message: AgentMessage }) {
+function MessageBubble({
+  message,
+  onExecuteDraft,
+}: {
+  message: AgentMessage;
+  onExecuteDraft?: (draftId: string) => void;
+}) {
   const user = message.role === "user";
+
+  // Tool result bubbles with structured analysis/execution data
+  if (message.role === "tool" && message.tool_result) {
+    const result = message.tool_result as Record<string, unknown>;
+    if ((result as { kind?: string }).kind === "analysis") {
+      return (
+        <AnalysisBubble
+          result={result as unknown as AnalysisResult}
+          onExecuteDraft={onExecuteDraft}
+        />
+      );
+    }
+    if ((result as { kind?: string }).kind === "execution") {
+      return <ExecutionBubble result={result as unknown as ExecutionResultUI} />;
+    }
+  }
+
   if (message.role === "tool") {
-    const tool = { name: message.tool_name ?? "tool", status: message.status ?? "completed", latency_ms: message.latency_ms ?? null, result_preview: message.tool_result ? JSON.stringify(message.tool_result) : null, arguments: message.tool_args ?? null };
+    const tool = {
+      name: message.tool_name ?? "tool",
+      status: message.status ?? "completed",
+      latency_ms: message.latency_ms ?? null,
+      result_preview: message.tool_result ? JSON.stringify(message.tool_result) : null,
+      arguments: message.tool_args ?? null,
+    };
     return <ToolRow tool={tool} />;
   }
+
   return (
     <article className={`w-fit max-w-[88%] rounded-xl border px-4 py-3 ${user ? "ml-auto border-gold-500/25 bg-gold-500/[0.08]" : "border-line/70 bg-ink-850/70"}`}>
       <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-fog">{user ? "You" : "Agent"}</div>
       <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-paper/90">{message.content}</p>
+    </article>
+  );
+}
+
+interface AnalysisResult {
+  kind: string;
+  symbol: string;
+  timeframe: string;
+  signal: string;
+  p_up: number;
+  edge_atr: number;
+  draft_id: string | null;
+  rationale: string;
+}
+
+interface ExecutionResultUI {
+  kind: string;
+  draft_id: string;
+  ok: boolean;
+  ticket: string | null;
+  fill_price: number | null;
+  detail: string;
+  blocked: boolean | null;
+  block_reason: string | null;
+}
+
+function AnalysisBubble({
+  result,
+  onExecuteDraft,
+}: {
+  result: AnalysisResult;
+  onExecuteDraft?: (draftId: string) => void;
+}) {
+  const side = result.signal;
+  const tone = side === "LONG" ? "long" : side === "SHORT" ? "short" : "neutral";
+  const hasDraft = !!result.draft_id;
+
+  return (
+    <article className="w-fit max-w-[88%] rounded-xl border px-4 py-3 border-line/70 bg-ink-850/70">
+      <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-fog">Agent</div>
+      <div className="mb-3">
+        <Badge tone={tone}>{side}</Badge>{" "}
+        <Badge tone="neutral">{result.timeframe}</Badge>{" "}
+        <Badge tone="neutral">p_up {result.p_up.toFixed(2)}</Badge>{" "}
+        <Badge tone={result.edge_atr >= 0 ? "long" : "short"}>edge {result.edge_atr >= 0 ? "+" : ""}{result.edge_atr.toFixed(2)} ATR</Badge>
+      </div>
+      <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-paper/90 mb-3">{result.rationale}</p>
+      {hasDraft && (
+        <div className="rounded-lg border border-line/60 bg-ink-900/60 p-3 mb-3">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-fog mb-2">Draft order</div>
+          <div className="flex gap-2">
+            <span className="text-[10px] text-fog">Side:</span>
+            <span className="font-mono text-[11px] text-paper">{side}</span>
+          </div>
+          <div className="flex gap-2">
+            <span className="text-[10px] text-fog">Draft:</span>
+            <span className="font-mono text-[11px] text-fog">{result.draft_id?.slice(0, 8)}…</span>
+          </div>
+        </div>
+      )}
+      {hasDraft && onExecuteDraft && (
+        <button
+          onClick={() => onExecuteDraft(result.draft_id!)}
+          className="text-[10px] underline underline-offset-4 hover:text-gold-400 text-gold-400"
+        >
+          Execute this trade
+        </button>
+      )}
+    </article>
+  );
+}
+
+function ExecutionBubble({
+  result,
+}: {
+  result: ExecutionResultUI;
+}) {
+  const tone = result.ok ? "long" : result.blocked ? "short" : "neutral";
+
+  return (
+    <article className="w-fit max-w-[88%] rounded-xl border px-4 py-3 border-line/70 bg-ink-850/70">
+      <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-fog">Agent</div>
+      <Badge tone={tone}>
+        {result.ok ? "FILLED" : result.blocked ? "BLOCKED" : "EXECUTION"}
+      </Badge>{" "}
+      <span className="text-[10px] text-fog ml-2">{result.detail}</span>
+      {result.ticket && (
+        <div className="mt-1 flex gap-2">
+          <span className="text-[10px] text-fog">Ticket:</span>
+          <span className="font-mono text-[11px] text-paper">{result.ticket}</span>
+        </div>
+      )}
+      {result.fill_price != null && (
+        <div className="mt-1 flex gap-2">
+          <span className="text-[10px] text-fog">Fill:</span>
+          <span className="font-mono text-[11px] text-paper">{result.fill_price}</span>
+        </div>
+      )}
+      {result.blocked && result.block_reason && (
+        <div className="mt-2 rounded border border-short/30 bg-short/[0.06] p-2">
+          <div className="text-[10px] text-short">{result.block_reason}</div>
+        </div>
+      )}
     </article>
   );
 }
