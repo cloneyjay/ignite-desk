@@ -64,6 +64,28 @@ class UnifiedChatAgent:
     ) -> ChatResponse:
         """Handle one chat turn: LLM with tools, delegating to Analyst/ExecutionDesk."""
 
+        # --- Identity gate: answer "who are you" without touching the model ---
+        identity = self._detect_identity(text)
+        if identity is not None:
+            return ChatResponse(
+                narrative=identity,
+                tool_calls=[],
+                structured={"kind": "identity"},
+            )
+
+        # --- Niche scope: decline clearly non-trading queries ---
+        if self._is_non_trading(text):
+            return ChatResponse(
+                narrative=(
+                    "I'm Aegus, a trading-only desk companion for XAUUSD day trading. "
+                    "I can help with market analysis, risk, positions, news, and "
+                    "guarded execution through MT5 — but I don't answer coding, "
+                    "general knowledge, or non-trading questions."
+                ),
+                tool_calls=[],
+                structured={"kind": "decline"},
+            )
+
         # Detect market research / brief intent and route to Analyst directly
         # so the agent gathers live data instead of chatting from knowledge.
         analysis_intent = self._detect_analysis_intent(text)
@@ -200,6 +222,71 @@ class UnifiedChatAgent:
 
         return (symbol, timeframe)
 
+    def _detect_identity(self, text: str) -> str | None:
+        """Answer identity questions deterministically; no model needed."""
+        import re
+
+        text_lower = text.lower()
+        identity_triggers = [
+            r"\bwho\s+are\s+you\b",
+            r"\bwhat\s+are\s+you\b",
+            r"\byour\s+name\b",
+            r"\bwhat\s+is\s+aegus\b",
+            r"\btell\s+me\s+about\s+yourself\b",
+        ]
+        if not any(re.search(p, text_lower) for p in identity_triggers):
+            return None
+        return (
+            "I'm Aegus, your personal AI day-trading desk companion for XAUUSD. "
+            "I analyse the market (live quote, bars, structure, Kronos forecast, "
+            "calendar and news), prepare risk-checked draft orders, and execute them "
+            "through MT5 under guards — daily loss limit, kill switch, spread, and "
+            "position caps. I only trade; I don't answer coding or general questions."
+        )
+
+    def _is_non_trading(self, text: str) -> bool:
+        """Return True when the query is clearly outside the trading niche."""
+        import re
+
+        text_lower = text.lower()
+
+        # If it mentions trading terms, it's in scope — check first so words
+        # like "show" (in "show my positions") aren't misclassified.
+        trading_terms = [
+            r"\b(xauusd|xagusd|gold|forex|currency|pair|position[s]?|trade[s]?|order[s]?|buy|sell|long|"
+            r"short|lot[s]?|pip[s]?|spread[s]?|sl|tp|stop[s]?|target[s]?|entry|exit|risk|margin|equity|"
+            r"account|balance|p&l|pnl|drawdown|kronos|mt5|metatrader|mcp|brief|"
+            r"analy[zs]|market|candle|bar|timeframe|signal|draft|execute|close[s]?|"
+            r"autonomous|kill switch|guard|calendar|news|economic|event)\b",
+        ]
+        # Check trading terms first so words like "show" (in "show my positions")
+        # aren't misclassified as non-trading.
+        if any(re.search(p, text_lower) for p in trading_terms):
+            return False
+
+        # Short greetings without trading context are allowed (conversational)
+        greetings = {"hi", "hello", "hey", "good morning", "good afternoon", "good evening"}
+        if text_lower.strip() in greetings or len(text_lower.split()) <= 2:
+            return False
+
+        # Explicit non-trading topic signals
+        non_trading_signals = [
+            r"\b(python|javascript|js|html|css|react|code|script|program|bug|compile|"
+            r"scrape|website|app|software|function|class|variable|loop|api endpoint)\b",
+            r"\b(cook|recipe|food|restaurant|diet|fitness|gym|workout)\b",
+            r"\b(movie|film|tv show|netflix|music|song|book|novel|game|sport|team)\b",
+            r"\b(weather|travel|hotel|flight|vacation|shopping|clothes|shoe)\b",
+            r"\b(politics|election|celebrity|gossip|religion|astrology)\b",
+        ]
+        if any(re.search(p, text_lower) for p in non_trading_signals):
+            return True
+
+        # Ambiguous short queries without trading terms: treat as non-trading to stay niche
+        if len(text_lower.split()) <= 6:
+            return True
+
+        return False
+
     def _get_tools(self) -> list[ToolSpec]:
         """Available tools: MCP registry tools plus analyst/execution delegation."""
         tools = self._registry.get_available(
@@ -270,6 +357,44 @@ class UnifiedChatAgent:
                 handler=self._handle_execution_desk_execute,
             )
         )
+        tools.append(
+            ToolSpec(
+                name="web.search",
+                permission="read",
+                description="Search the web for current market news, economic events, and price context",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                    },
+                    "required": ["query"],
+                    "additionalProperties": False,
+                },
+                output_schema={
+                    "type": "object",
+                    "properties": {
+                        "results": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "title": {"type": "string"},
+                                    "url": {"type": "string"},
+                                    "snippet": {"type": "string"},
+                                },
+                                "required": ["title", "url", "snippet"],
+                                "additionalProperties": False,
+                            },
+                        },
+                        "message": {"type": "string"},
+                    },
+                    "required": ["results"],
+                    "additionalProperties": False,
+                },
+                timeout_s=15.0,
+                handler=self._handle_web_search,
+            )
+        )
         return tools
 
     def _execute_tool(
@@ -283,6 +408,8 @@ class UnifiedChatAgent:
             return self._handle_analyst_assess(self.rt, args)
         if name == "execution_desk.execute":
             return self._handle_execution_desk_execute(self.rt, args)
+        if name == "web.search":
+            return self._handle_web_search(self.rt, args)
 
         # Registry tool
         tool = self._registry._tools.get(name)
@@ -354,6 +481,75 @@ class UnifiedChatAgent:
             "detail": result.detail,
             "blocked": result.blocked,
             "block_reason": result.block_reason,
+        }
+
+    def _handle_web_search(
+        self, rt: Runtime, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Search the web for current market context.
+
+        Tries the configured search API first; falls back to DuckDuckGo
+        Instant Answer API (no API key required). Returns results or a
+        configuration message.
+        """
+        query = args["query"]
+        search_url = getattr(rt.settings, "search_api_url", None) or ""
+        search_key = getattr(rt.settings, "search_api_key", None) or ""
+
+        if search_url and search_key:
+            try:
+                import httpx
+
+                with httpx.Client(timeout=10.0) as client:
+                    resp = client.get(
+                        search_url,
+                        params={"q": query, "key": search_key},
+                        headers={"Accept": "application/json"},
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        results = []
+                        for item in data.get("items", data.get("results", []))[:5]:
+                            results.append(
+                                {
+                                    "title": item.get("title", ""),
+                                    "url": item.get("link", item.get("url", "")),
+                                    "snippet": item.get("snippet", item.get("description", "")),
+                                }
+                            )
+                        return {"results": results}
+            except Exception:  # noqa: BLE001
+                pass
+
+        # No-key fallback: DuckDuckGo Instant Answer API (JSON, no parser needed)
+        try:
+            import httpx
+
+            with httpx.Client(timeout=10.0, headers={"User-Agent": "Mozilla/5.0"}) as client:
+                resp = client.get(
+                    "https://api.duckduckgo.com/",
+                    params={"q": query, "format": "json", "no_html": "1", "no_redirect": "1"},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    results = []
+                    for topic in data.get("RelatedTopics", [])[:5]:
+                        if isinstance(topic, dict) and topic.get("Text"):
+                            results.append(
+                                {
+                                    "title": topic.get("Text", "")[:120],
+                                    "url": topic.get("FirstURL", ""),
+                                    "snippet": topic.get("Text", ""),
+                                }
+                            )
+                    if results:
+                        return {"results": results}
+        except Exception:  # noqa: BLE001
+            pass
+
+        return {
+            "results": [],
+            "message": "Web search is not configured. Set SEARCH_API_URL and SEARCH_API_KEY to enable live web results.",
         }
 
     # ------------------------------------------------------------------ messages

@@ -72,6 +72,8 @@ class Settings:
     news_post_minutes: int = 15
     news_currencies: str = "USD,EUR,CNH,JPY"
     knowledge_dir: Path = ROOT / "docs" / "agent-knowledge"
+    search_api_url: str = ""
+    search_api_key: str = ""
     llm: LLMSettings = field(default_factory=LLMSettings)
     agent_timeout_s: float = 25.0
 
@@ -100,6 +102,8 @@ def load_settings() -> Settings:
         news_post_minutes=int(os.getenv("IGNITE_NEWS_POST_MIN", "15")),
         news_currencies=os.getenv("IGNITE_NEWS_CURRENCIES", "USD,EUR,CNH,JPY"),
         knowledge_dir=_path("IGNITE_KNOWLEDGE_DIR", "./docs/agent-knowledge"),
+        search_api_url=os.getenv("SEARCH_API_URL", "").strip(),
+        search_api_key=os.getenv("SEARCH_API_KEY", "").strip(),
         llm=LLMSettings(
             provider_order=tuple(
                 name.strip().lower()

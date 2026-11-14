@@ -63,3 +63,44 @@ def test_unified_chat_agent_detects_outlook_intent(rt):
     assert isinstance(response, ChatResponse)
     assert response.structured.get("kind") == "analysis"
     assert response.structured.get("symbol") == "XAUUSD"
+
+
+def test_unified_chat_agent_identity(rt):
+    """Identity questions are answered deterministically without the LLM."""
+    agent = UnifiedChatAgent(rt)
+    response = agent.respond("session_1", "who are you?", [])
+
+    assert isinstance(response, ChatResponse)
+    assert "Aegus" in response.narrative
+    assert "trading" in response.narrative.lower()
+    assert len(response.tool_calls) == 0
+
+
+def test_unified_chat_agent_declines_non_trading(rt):
+    """Non-trading queries (coding, etc.) are politely declined."""
+    agent = UnifiedChatAgent(rt)
+    response = agent.respond("session_1", "write me a python script to scrape a website", [])
+
+    assert isinstance(response, ChatResponse)
+    assert "trading" in response.narrative.lower()
+    assert len(response.tool_calls) == 0
+
+
+def test_unified_chat_agent_web_search_tool_available(rt):
+    """The web.search tool is registered and available."""
+    agent = UnifiedChatAgent(rt)
+    tool_names = [t.name for t in agent._get_tools()]
+    assert "web.search" in tool_names
+
+
+def test_web_search_executes(rt):
+    """web.search tool handler returns results or a configuration message."""
+    agent = UnifiedChatAgent(rt)
+    tools = {t.name: t for t in agent._get_tools()}
+    tool = tools.get("web.search")
+    assert tool is not None
+
+    result = tool.handler(rt, {"query": "XAUUSD gold price outlook"})
+    assert isinstance(result, dict)
+    assert "results" in result or "error" in result or "message" in result
+

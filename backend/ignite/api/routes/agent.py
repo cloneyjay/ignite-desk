@@ -690,6 +690,27 @@ def _fallback_deterministic(rt: Runtime, text: str) -> ChatResponse:
     text_lower = text.lower()
     tool_calls: list[dict[str, Any]] = []
 
+    # Identity questions — answered even when the model is unreachable
+    identity_triggers = [
+        r"\bwho\s+are\s+you\b",
+        r"\bwhat\s+are\s+you\b",
+        r"\byour\s+name\b",
+        r"\bwhat\s+is\s+aegus\b",
+        r"\btell\s+me\s+about\s+yourself\b",
+    ]
+    if any(re.search(p, text_lower) for p in identity_triggers):
+        return ChatResponse(
+            narrative=(
+                "I'm Aegus, your personal AI day-trading desk companion for XAUUSD. "
+                "I analyse the market (live quote, bars, structure, Kronos forecast, "
+                "calendar and news), prepare risk-checked draft orders, and execute them "
+                "through MT5 under guards — daily loss limit, kill switch, spread, and "
+                "position caps. I only trade; I don't answer coding or general questions."
+            ),
+            tool_calls=[],
+            structured={"kind": "identity"},
+        )
+
     # Market brief / price action request
     if any(w in text_lower for w in ("brief", "price action", "anticipate", "outlook", "what to expect")):
         symbol = "XAUUSD"
