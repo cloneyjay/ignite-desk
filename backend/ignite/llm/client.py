@@ -46,6 +46,17 @@ class ToolCall:
     name: str
     arguments: dict[str, Any]
 
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to OpenAI tool call format."""
+        return {
+            "id": self.id,
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "arguments": json.dumps(self.arguments),
+            },
+        }
+
 
 @dataclass(frozen=True)
 class Provider:
