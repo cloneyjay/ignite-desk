@@ -52,6 +52,8 @@ class AgentConfig:
     enabled: bool = False
     operating_mode: OperatingMode = "prepare"
     execution_mode: ExecutionMode = "shadow"
+    autonomy_level: int = 0
+    policy_path: str = ""
     symbols: tuple[str, ...] = ()
     timeframe: str = "M15"
     cycle_interval_min: int = 30
@@ -77,6 +79,8 @@ class AgentConfig:
             enabled=os.getenv("IGNITE_AGENT_ENABLED", "false").lower() == "true",
             operating_mode=os.getenv("IGNITE_AGENT_MODE", "prepare").strip().lower(),  # type: ignore[arg-type]
             execution_mode=os.getenv("IGNITE_EXECUTION_MODE", "shadow").strip().lower(),  # type: ignore[arg-type]
+            autonomy_level=int(os.getenv("IGNITE_AUTONOMY_LEVEL", "0")),
+            policy_path=os.getenv("IGNITE_POLICY_PATH", ""),
             symbols=_parse_csv(os.getenv("IGNITE_AGENT_SYMBOLS")),
             timeframe=os.getenv("IGNITE_AGENT_TIMEFRAME", "M15"),
             cycle_interval_min=int(os.getenv("IGNITE_AGENT_CYCLE_INTERVAL_MIN", "30")),
@@ -127,6 +131,8 @@ class AgentConfigPatch(BaseModel):
     enabled: bool | None = None
     operating_mode: OperatingMode | None = None
     execution_mode: ExecutionMode | None = None
+    autonomy_level: int | None = None
+    policy_path: str | None = None
     symbols: list[str] | None = None
     timeframe: str | None = None
     cycle_interval_min: int | None = None

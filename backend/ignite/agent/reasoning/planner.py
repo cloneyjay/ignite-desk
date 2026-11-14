@@ -54,7 +54,8 @@ class Planner:
         # Get available tools for the current mode
         tools = self.tool_registry.get_available(
             self.rt.config().operating_mode,
-            self.rt.kill_switch()
+            self.rt.kill_switch(),
+            self.rt.config().autonomy_level,
         )
 
         # Build tool descriptions for the LLM

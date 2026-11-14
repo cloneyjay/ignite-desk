@@ -47,13 +47,16 @@ class FakeRuntime:
         self.store = MagicMock()
         self.store.append_agent_event = MagicMock()
         self.config = MagicMock()
-        self.config.return_value = MagicMock()
         self.config.return_value.operating_mode = "autonomous"
+        self.config.return_value.execution_mode = "live"
+        self.config.return_value.autonomy_level = 2
         self.kill_switch = MagicMock(return_value=False)
 
     def config(self):
         cfg = MagicMock()
         cfg.operating_mode = "autonomous"
+        cfg.execution_mode = "live"
+        cfg.autonomy_level = 2
         return cfg
 
     def kill_switch(self):

@@ -41,7 +41,7 @@ class Orchestrator:
     def run_cycle(self, symbol: str, timeframe: str) -> Decision:
         decision_id = uuid.uuid4().hex
         tools = self.rt.tool_registry.get_available(
-            self.rt.config().operating_mode, self.rt.kill_switch()
+            self.rt.config().operating_mode, self.rt.kill_switch(), self.rt.config().autonomy_level
         )
         openai_tools = [t.to_openai() for t in tools]
 

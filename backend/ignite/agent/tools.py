@@ -1053,15 +1053,15 @@ class ToolRegistry:
     def _register(self, spec: ToolSpec) -> None:
         self._tools[spec.name] = spec
 
-    def get_available(self, mode: str, kill_switch: bool) -> list[ToolSpec]:
-        """Return tools available for the given mode and kill switch state."""
+    def get_available(self, mode: str, kill_switch: bool, autonomy_level: int = 0) -> list[ToolSpec]:
+        """Return tools available for the given mode, kill switch state, and autonomy level."""
         result = []
         for spec in self._tools.values():
             if spec.permission == "execute":
-                if mode != "autonomous" or kill_switch:
+                if mode != "autonomous" or kill_switch or autonomy_level < 2:
                     continue
             elif spec.permission == "prepare":
-                if mode not in ("autonomous", "prepare"):
+                if mode not in ("autonomous", "prepare") or autonomy_level < 1:
                     continue
             # read tools always available
             result.append(spec)
