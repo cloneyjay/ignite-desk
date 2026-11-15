@@ -51,6 +51,22 @@ class ToolSpec:
         return adapter.validate_python(result)
 
 
+def permission_allowed(
+    permission: str, mode: str, kill_switch: bool, autonomy_level: int = 0
+) -> bool:
+    """Single source of truth for tool gating.
+
+    read    → always allowed
+    prepare → autonomous/prepare mode and autonomy level >= 1
+    execute → autonomous mode, kill switch off, autonomy level >= 2
+    """
+    if permission == "execute":
+        return mode == "autonomous" and not kill_switch and autonomy_level >= 2
+    if permission == "prepare":
+        return mode in ("autonomous", "prepare") and autonomy_level >= 1
+    return True
+
+
 class ToolRegistry:
     """Registry of all available tools, filtered by mode and kill switch."""
 
@@ -541,18 +557,13 @@ class ToolRegistry:
             ToolSpec(
                 name="execution.place_order",
                 permission="execute",
-                description="Send a market order with SL/TP through the gateway",
+                description="Execute a confirmed order draft through the guarded execution path",
                 input_schema={
                     "type": "object",
                     "properties": {
-                        "symbol": {"type": "string"},
-                        "side": {"type": "string", "enum": ["buy", "sell"]},
-                        "lots": {"type": "number"},
-                        "sl": {"type": "number"},
-                        "tp": {"type": "number"},
-                        "decision_id": {"type": "string"},
+                        "draft_id": {"type": "string"},
                     },
-                    "required": ["symbol", "side", "lots", "sl", "tp", "decision_id"],
+                    "required": ["draft_id"],
                     "additionalProperties": False,
                 },
                 output_schema={
@@ -1209,19 +1220,17 @@ class ToolRegistry:
     def _register(self, spec: ToolSpec) -> None:
         self._tools[spec.name] = spec
 
+    def get(self, name: str) -> ToolSpec | None:
+        """Return one tool by name, or None if it is not registered."""
+        return self._tools.get(name)
+
     def get_available(self, mode: str, kill_switch: bool, autonomy_level: int = 0) -> list[ToolSpec]:
         """Return tools available for the given mode, kill switch state, and autonomy level."""
-        result = []
-        for spec in self._tools.values():
-            if spec.permission == "execute":
-                if mode != "autonomous" or kill_switch or autonomy_level < 2:
-                    continue
-            elif spec.permission == "prepare":
-                if mode not in ("autonomous", "prepare") or autonomy_level < 1:
-                    continue
-            # read tools always available
-            result.append(spec)
-        return result
+        return [
+            spec
+            for spec in self._tools.values()
+            if permission_allowed(spec.permission, mode, kill_switch, autonomy_level)
+        ]
 
 
 # ============================================================
@@ -1435,22 +1444,17 @@ class ToolRegistry:
         }
 
     async def _execution_place_order(self, rt: Runtime, args: dict[str, Any]) -> dict[str, Any]:
-        from backend.ignite.services.gateway import OrderRequest
-        req = OrderRequest(
-            symbol=args["symbol"],
-            side=args["side"],
-            lots=args["lots"],
-            sl=args["sl"],
-            tp=args["tp"],
-            decision_id=args["decision_id"],
-        )
-        result = rt.gateway.place(req)
+        from backend.ignite.services.execution import execute_draft_autonomous
+        draft_id = args["draft_id"]
+        result = execute_draft_autonomous(rt, draft_id)
+        position = result.get("position") or {}
+        order = result.get("order") or {}
         return {
-            "ok": result.ok,
-            "code": result.code,
-            "detail": result.detail,
-            "position_ticket": result.position_ticket,
-            "fill_price": result.fill_price,
+            "ok": bool(result.get("ok", False)),
+            "code": "OK" if result.get("ok") else "ERROR",
+            "detail": result.get("state", ""),
+            "position_ticket": position.get("ticket") or order.get("ticket"),
+            "fill_price": position.get("price_open") or order.get("filled_price"),
         }
 
     async def _execution_modify_position(self, rt: Runtime, args: dict[str, Any]) -> dict[str, Any]:

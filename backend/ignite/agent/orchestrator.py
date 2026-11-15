@@ -101,7 +101,7 @@ class Orchestrator:
         self, name: str, args: dict[str, Any], decision_id: str
     ) -> dict[str, Any]:
         """Execute a single tool call via the registry and record the event."""
-        tool = self.rt.tool_registry._tools.get(name)
+        tool = self.rt.tool_registry.get(name)
         if tool is None:
             result = {"error": f"unknown tool: {name}"}
             self._record_tool_event(
