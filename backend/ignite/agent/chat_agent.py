@@ -1,22 +1,37 @@
-"""UnifiedChatAgent: LLM-first conversational router with MCP tool access.
+"""UnifiedChatAgent: LLM-first conversational agent with full MCP tool access.
 
-The agent speaks naturally (Pattern C) and can delegate to the structured
-Analyst (Pattern B) for multi-source analysis or the ExecutionDesk for
-guarded order execution. It never bypasses risk guards.
+The LLM (NVIDIA NIM) is the only decision maker. It receives the user's
+message with the complete tool set (market data, Kronos forecast, risk
+guards, MT5 execution, strategy management, desk memory) as OpenAI functions
+and decides which tools to call, in what order, and how to synthesize the
+results into plain English.
+
+There is no deterministic router, no regex intent detection, and no
+canned-response fallback. If the model cannot be reached the agent says so
+honestly instead of inventing a market read.
+
+The LLM invocation loop itself lives in ``LLMHarness`` so that chat messages
+and scheduler ticks route through the identical harness with the identical
+tool set and context budget.
 """
 
 from __future__ import annotations
 
-import json
-import time
 from dataclasses import dataclass
 from typing import Any
 
 from backend.ignite.agent.analyst import Analyst
 from backend.ignite.agent.execution_desk import ExecutionDesk
-from backend.ignite.agent.tools import ToolRegistry, ToolSpec
-from backend.ignite.llm.client import LLMResult, ToolCall
+from backend.ignite.agent.llm_harness import HarnessResult, LLMHarness
+from backend.ignite.agent.tools import ToolRegistry, ToolSpec, permission_allowed
+from backend.ignite.llm.client import LLMError, LLMUnavailable, ToolCall
 from backend.ignite.services.runtime import Runtime
+
+UNREACHABLE_NARRATIVE = (
+    "I can't reach the language model right now, so I can't analyse the market "
+    "or give you a real answer. I won't guess without it. Check the NVIDIA NIM "
+    "provider configuration (or the backup provider) and try again."
+)
 
 
 @dataclass(frozen=True)
@@ -26,284 +41,139 @@ class ChatResponse:
     narrative: str
     tool_calls: list[dict[str, Any]]
     structured: dict[str, Any]
+    provider: str | None = None
+    model: str | None = None
 
 
-SYSTEM_PROMPT = """You are Aegus, a calm, sharp personal trading companion for a one-person XAUUSD day-trading desk.
+SYSTEM_PROMPT = """You are Aegus, an AI day-trading desk companion for XAUUSD.
 
-Speak naturally, warmly, and directly — like a trader talking to another trader. Plain English first, numbers and technical detail when useful. Explain what you checked, what it means, what could invalidate it, and what action was or was not taken.
+You are the PRIMARY decision maker. You receive live market data, Kronos
+forecasts, and MT5 execution tools as function calls. You decide which tools
+to call, in what order, and how to synthesize the results into plain English.
 
-CAPABILITIES:
-- You can inspect live MT5 account state, positions, prices, candles, market structure, spreads, margin, calendar, news, forecasts, analyses, drafts, risk, and trade history.
-- You can run a full market analysis (quote + bars + structure + fundamentals + Kronos forecast → draft) and explain the result.
-- You can execute a prepared draft through guarded risk checks and the MT5 broker.
-- You can manage positions (close, modify SL/TP) and watchlists.
+READ TOOLS (always available):
+- market.quote: Live bid/ask/spread for a symbol
+- market.bars: OHLCV candles for symbol/timeframe
+- market.structure: Trend, EMAs, VWAP, ATR, swing highs/lows
+- market.spec: Symbol contract specifications
+- account.snapshot: Account equity, balance, margin
+- account.positions: Open positions with P&L
+- position.list / position.history: Managed positions and closed trades
+- news.calendar: Economic calendar events (high impact windows)
+- news.headlines: Recent terminal news
+- web.search: Web search for current news and context (optional; if it is not
+  configured the tool says so - do not present its absence as a finding)
 
-GUARDRAILS:
-- You may only execute orders when Autonomous mode is enabled and the kill switch is off.
-- Every entry must have a protective stop loss and take profit.
-- Never invent prices, positions, or account values. Read them from live tool outputs.
-- If a tool fails or returns an error, say so plainly. Never pretend a check passed when it didn't.
-- Never promise profit or hide a blocked trade.
-- If uncertain, ask clarifying questions instead of hallucinating.
+PREPARE TOOLS (analysis and drafting):
+- forecast.run: KRONOS forecast - probabilistic price direction (p_up, edge_atr, dispersion)
+- analysis.run: Full deterministic analysis → draft order with entry/SL/TP
+- risk.evaluate: Validate order against risk guards
+- draft.create / draft.evaluate: Create and inspect time-limited order drafts
 
-TOOLS: Use the available tools to gather live data before answering. Do not guess about market state.
+EXECUTE TOOLS (only when Autonomous mode is enabled AND kill switch is off):
+- execution.place_order: Send market order with SL/TP
+- execution.modify_position: Modify stop loss / take profit
+- execution.close_position: Close a position
+
+STRATEGY AND MEMORY TOOLS:
+- strategy.create / strategy.compile / strategy.backtest / strategy.list / strategy.get
+- scratchpad.* / episodic.* / semantic.* / procedural.*: desk memory
+
+INSTRUCTIONS:
+1. ALWAYS use tools to get live data before answering market questions. Never invent prices.
+2. Use Kronos (forecast.run) for directional probability - do not guess direction yourself.
+3. For trade requests: analyse first (market data + Kronos + analysis), validate risk (risk.evaluate), then execute only if all guards pass.
+4. Explain your reasoning in plain English: what you checked, what it means, what could invalidate it.
+5. If uncertain, ask clarifying questions rather than guessing.
+6. Never bypass safety guards. If a tool returns an error, say so plainly.
+7. Never promise profit or hide a blocked trade.
+8. The user must explicitly confirm before any order is sent (Autonomous mode must be on for automatic execution).
+9. Stay on the desk: trading, market analysis, risk, positions, strategy, and account state.
+10. The tool list you receive is already filtered by the desk's autonomy level. If an execution tool is missing, say that execution is disabled and name what has to change (autonomous mode, autonomy level, kill switch). Never claim an order was sent without a tool result.
+
+TOOL USAGE FORMAT:
+When you need information, call the relevant tool. When you have all the information,
+synthesize it into a clear, trader-to-trader response. Do not chain unnecessary tool calls.
 """
 
 
 class UnifiedChatAgent:
-    """Conversational agent with full MCP tool access and B+C delegation."""
+    """LLM-first conversational agent. The model decides which tools to call.
+
+    Delegates the bounded tool-calling loop to ``LLMHarness`` so chat and the
+    autonomous scheduler share one decision brain.
+    """
 
     def __init__(self, rt: Runtime) -> None:
         self.rt = rt
-        self.analyst = Analyst(rt)
-        self.execution_desk = ExecutionDesk(rt)
         self._registry = ToolRegistry()
 
     def respond(
         self, session_id: str, text: str, history: list[dict[str, Any]]
     ) -> ChatResponse:
-        """Handle one chat turn: LLM with tools, delegating to Analyst/ExecutionDesk."""
+        """Handle one chat turn: the model decides which tools to call."""
+        messages = self._build_messages(session_id, text, history)
+        tool_specs = self._get_tools()
 
-        # --- Identity gate: answer "who are you" without touching the model ---
-        identity = self._detect_identity(text)
-        if identity is not None:
+        def execute(name: str, args: dict[str, Any]) -> dict[str, Any]:
+            return self._execute_tool(ToolCall(id="", name=name, arguments=args))
+
+        try:
+            result: HarnessResult = LLMHarness(
+                self.rt,
+                system_prompt=SYSTEM_PROMPT,
+                tool_specs=tool_specs,
+                execute=execute,
+            ).run(messages)
+        except LLMUnavailable as exc:
+            attempts = "; ".join(exc.attempts) if exc.attempts else str(exc)
             return ChatResponse(
-                narrative=identity,
+                narrative=UNREACHABLE_NARRATIVE,
                 tool_calls=[],
-                structured={"kind": "identity"},
+                structured={"kind": "llm_unavailable", "error": attempts[:500]},
             )
-
-        # --- Niche scope: decline clearly non-trading queries ---
-        if self._is_non_trading(text):
+        except LLMError as exc:
             return ChatResponse(
                 narrative=(
-                    "I'm Aegus, a trading-only desk companion for XAUUSD day trading. "
-                    "I can help with market analysis, risk, positions, news, and "
-                    "guarded execution through MT5 — but I don't answer coding, "
-                    "general knowledge, or non-trading questions."
+                    "The model call failed, so this answer is incomplete. "
+                    f"Detail: {exc}"
                 ),
                 tool_calls=[],
-                structured={"kind": "decline"},
+                structured={"kind": "llm_error", "error": str(exc)},
             )
-
-        # Detect market research / brief intent and route to Analyst directly
-        # so the agent gathers live data instead of chatting from knowledge.
-        analysis_intent = self._detect_analysis_intent(text)
-        if analysis_intent:
-            symbol, timeframe = analysis_intent
-            try:
-                result = self.analyst.assess(symbol, timeframe)
-                structured = {
-                    "kind": "analysis",
-                    "symbol": result.symbol,
-                    "timeframe": result.timeframe,
-                    "signal": result.signal,
-                    "p_up": result.p_up,
-                    "edge_atr": result.edge_atr,
-                    "draft_id": result.draft_id,
-                    "rationale": result.rationale,
-                }
-                narrative = (
-                    f"{result.rationale}\n\n"
-                    f"Live quote: bid {result.data.get('quote', {}).get('bid', 'n/a')}, "
-                    f"ask {result.data.get('quote', {}).get('ask', 'n/a')}, "
-                    f"spread {result.data.get('quote', {}).get('spread', 'n/a')} pts.\n"
-                    f"Trend: {result.data.get('structure', {}).get('trend', 'n/a')}, "
-                    f"ATR {result.data.get('structure', {}).get('atr', 'n/a'):.2f}."
-                )
-                tool_call_records = [
-                    {
-                        "name": "analyst.assess",
-                        "arguments": {"symbol": symbol, "timeframe": timeframe},
-                        "result": {
-                            "symbol": result.symbol,
-                            "timeframe": result.timeframe,
-                            "signal": result.signal,
-                            "p_up": result.p_up,
-                            "edge_atr": result.edge_atr,
-                            "draft_id": result.draft_id,
-                            "rationale": result.rationale,
-                        },
-                    }
-                ]
-                return ChatResponse(
-                    narrative=narrative,
-                    tool_calls=tool_call_records,
-                    structured=structured,
-                )
-            except Exception as exc:  # noqa: BLE001
-                # Fall through to LLM conversation if analysis fails
-                pass
-
-        messages = self._build_messages(session_id, text, history)
-        tools = self._get_tools()
-        openai_tools = [t.to_openai() for t in tools]
-
-        tool_call_records: list[dict[str, Any]] = []
-        structured: dict[str, Any] = {}
-        start = time.monotonic()
-        deadline_s = 90.0
-
-        for _step in range(8):
-            if time.monotonic() - start > deadline_s:
-                break
-
-            result: LLMResult = self.rt.llm.complete(
-                messages,
-                tools=openai_tools,
-                tool_choice="auto",
-                timeout_s=max(5.0, deadline_s - (time.monotonic() - start)),
-            )
-
-            if not result.tool_calls:
-                return ChatResponse(
-                    narrative=(
-                        result.text
-                        or "I'm here — how can I help? Try asking about your positions, "
-                        "risk, or a market brief (e.g. \"brief me on XAUUSD\")."
-                    ),
-                    tool_calls=tool_call_records,
-                    structured=structured,
-                )
-
-            for tc in result.tool_calls:
-                tool_result = self._execute_tool(tc, structured)
-                tool_call_records.append(
-                    {
-                        "name": tc.name,
-                        "arguments": tc.arguments,
-                        "result": tool_result,
-                    }
-                )
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": json.dumps(tool_result),
-                    }
-                )
 
         return ChatResponse(
-            narrative="I've reached my analysis limit for this turn. Tell me what you'd like to do next.",
-            tool_calls=tool_call_records,
-            structured=structured,
+            narrative=result.text,
+            tool_calls=result.tool_calls,
+            structured={},
+            provider=result.provider,
+            model=result.model,
         )
 
-    # ------------------------------------------------------------------ tools
-
-    def _detect_analysis_intent(
-        self, text: str
-    ) -> tuple[str, str] | None:
-        """Detect market research / brief / price-action requests.
-
-        Returns (symbol, timeframe) when the user is asking for live market
-        analysis rather than a general conversation.
-        """
-        import re
-
-        text_lower = text.lower()
-        triggers = [
-            "brief", "price action", "anticipate", "outlook", "what to expect",
-            "what should i expect", "research", "analyze", "analyse",
-            "market read", "setup", "signal",
-        ]
-        if not any(w in text_lower for w in triggers):
-            return None
-
-        # Extract symbol (default XAUUSD). Match forex/crypto patterns like
-        # XAUUSD, EURUSD, GBPUSD, BTCUSD, or gold/xau mentions.
-        sym_match = re.search(r"\b(XAUUSD|XAGUSD|[A-Z]{3}USD)\b", text.upper())
-        if not sym_match and any(w in text_lower for w in ("gold", "xau")):
-            symbol = "XAUUSD"
-        elif sym_match:
-            symbol = sym_match.group(1)
-        else:
-            symbol = "XAUUSD"
-
-        # Extract timeframe (default M15)
-        tf_match = re.search(r"\b(M5|M15|M30|H1)\b", text.upper())
-        timeframe = tf_match.group(1) if tf_match else "M15"
-
-        return (symbol, timeframe)
-
-    def _detect_identity(self, text: str) -> str | None:
-        """Answer identity questions deterministically; no model needed."""
-        import re
-
-        text_lower = text.lower()
-        identity_triggers = [
-            r"\bwho\s+are\s+you\b",
-            r"\bwhat\s+are\s+you\b",
-            r"\byour\s+name\b",
-            r"\bwhat\s+is\s+aegus\b",
-            r"\btell\s+me\s+about\s+yourself\b",
-        ]
-        if not any(re.search(p, text_lower) for p in identity_triggers):
-            return None
-        return (
-            "I'm Aegus, your personal AI day-trading desk companion for XAUUSD. "
-            "I analyse the market (live quote, bars, structure, Kronos forecast, "
-            "calendar and news), prepare risk-checked draft orders, and execute them "
-            "through MT5 under guards — daily loss limit, kill switch, spread, and "
-            "position caps. I only trade; I don't answer coding or general questions."
-        )
-
-    def _is_non_trading(self, text: str) -> bool:
-        """Return True when the query is clearly outside the trading niche."""
-        import re
-
-        text_lower = text.lower()
-
-        # If it mentions trading terms, it's in scope — check first so words
-        # like "show" (in "show my positions") aren't misclassified.
-        trading_terms = [
-            r"\b(xauusd|xagusd|gold|forex|currency|pair|position[s]?|trade[s]?|order[s]?|buy|sell|long|"
-            r"short|lot[s]?|pip[s]?|spread[s]?|sl|tp|stop[s]?|target[s]?|entry|exit|risk|margin|equity|"
-            r"account|balance|p&l|pnl|drawdown|kronos|mt5|metatrader|mcp|brief|"
-            r"analy[zs]|market|candle|bar|timeframe|signal|draft|execute|close[s]?|"
-            r"autonomous|kill switch|guard|calendar|news|economic|event)\b",
-        ]
-        # Check trading terms first so words like "show" (in "show my positions")
-        # aren't misclassified as non-trading.
-        if any(re.search(p, text_lower) for p in trading_terms):
-            return False
-
-        # Short greetings without trading context are allowed (conversational)
-        greetings = {"hi", "hello", "hey", "good morning", "good afternoon", "good evening"}
-        if text_lower.strip() in greetings or len(text_lower.split()) <= 2:
-            return False
-
-        # Explicit non-trading topic signals
-        non_trading_signals = [
-            r"\b(python|javascript|js|html|css|react|code|script|program|bug|compile|"
-            r"scrape|website|app|software|function|class|variable|loop|api endpoint)\b",
-            r"\b(cook|recipe|food|restaurant|diet|fitness|gym|workout)\b",
-            r"\b(movie|film|tv show|netflix|music|song|book|novel|game|sport|team)\b",
-            r"\b(weather|travel|hotel|flight|vacation|shopping|clothes|shoe)\b",
-            r"\b(politics|election|celebrity|gossip|religion|astrology)\b",
-        ]
-        if any(re.search(p, text_lower) for p in non_trading_signals):
-            return True
-
-        # Ambiguous short queries without trading terms: treat as non-trading to stay niche
-        if len(text_lower.split()) <= 6:
-            return True
-
-        return False
+    # ------------------------------------------------------------------- tools
 
     def _get_tools(self) -> list[ToolSpec]:
-        """Available tools: MCP registry tools plus analyst/execution delegation."""
-        tools = self._registry.get_available(
-            self.rt.config().operating_mode,
-            self.rt.kill_switch(),
-            self.rt.config().autonomy_level,
+        """All available tools: MCP registry + Analyst + ExecutionDesk + web.search.
+
+        ``analyst.assess`` is always offered: it only reads the market and
+        produces an inert draft, and execution stays guarded downstream.
+        ``execution_desk.execute`` follows the same gate as every other
+        execute tool.
+        """
+        mode = self.rt.config().operating_mode
+        kill_switch = self.rt.kill_switch()
+        autonomy_level = self.rt.config().autonomy_level
+        can_execute = permission_allowed(
+            "execute", mode, kill_switch, autonomy_level
         )
-        # Add custom delegation tools that wrap Analyst / ExecutionDesk
+
+        tools = self._registry.get_available(mode, kill_switch, autonomy_level)
+
         tools.append(
             ToolSpec(
                 name="analyst.assess",
                 permission="prepare",
-                description="Run full multi-source market analysis for a symbol/timeframe and return signal, levels, and draft",
+                description="Run full multi-source market analysis: live quote, bars, structure, Kronos forecast, news → draft order with rationale",
                 input_schema={
                     "type": "object",
                     "properties": {
@@ -331,36 +201,39 @@ class UnifiedChatAgent:
                 handler=self._handle_analyst_assess,
             )
         )
-        tools.append(
-            ToolSpec(
-                name="execution_desk.execute",
-                permission="execute",
-                description="Execute a prepared draft order through guarded risk checks and the MT5 broker",
-                input_schema={
-                    "type": "object",
-                    "properties": {
-                        "draft_id": {"type": "string"},
+
+        if can_execute:
+            tools.append(
+                ToolSpec(
+                    name="execution_desk.execute",
+                    permission="execute",
+                    description="Execute a prepared draft order through guarded risk checks and the MT5 broker",
+                    input_schema={
+                        "type": "object",
+                        "properties": {
+                            "draft_id": {"type": "string"},
+                        },
+                        "required": ["draft_id"],
+                        "additionalProperties": False,
                     },
-                    "required": ["draft_id"],
-                    "additionalProperties": False,
-                },
-                output_schema={
-                    "type": "object",
-                    "properties": {
-                        "ok": {"type": "boolean"},
-                        "ticket": {"type": ["string", "null"]},
-                        "fill_price": {"type": ["number", "null"]},
-                        "detail": {"type": "string"},
-                        "blocked": {"type": "boolean"},
-                        "block_reason": {"type": ["string", "null"]},
+                    output_schema={
+                        "type": "object",
+                        "properties": {
+                            "ok": {"type": "boolean"},
+                            "ticket": {"type": ["string", "null"]},
+                            "fill_price": {"type": ["number", "null"]},
+                            "detail": {"type": "string"},
+                            "blocked": {"type": "boolean"},
+                            "block_reason": {"type": ["string", "null"]},
+                        },
+                        "required": ["ok", "detail"],
+                        "additionalProperties": False,
                     },
-                    "required": ["ok", "detail"],
-                    "additionalProperties": False,
-                },
-                timeout_s=30.0,
-                handler=self._handle_execution_desk_execute,
+                    timeout_s=30.0,
+                    handler=self._handle_execution_desk_execute,
+                )
             )
-        )
+
         tools.append(
             ToolSpec(
                 name="web.search",
@@ -399,12 +272,12 @@ class UnifiedChatAgent:
                 handler=self._handle_web_search,
             )
         )
+
         return tools
 
-    def _execute_tool(
-        self, tool_call: ToolCall, structured: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Execute one tool call, routing custom tools to Analyst/ExecutionDesk."""
+    def _execute_tool(self, tool_call: ToolCall) -> dict[str, Any]:
+        """Execute one tool call, routing custom tools to Analyst/ExecutionDesk,
+        everything else to the MCP ToolRegistry."""
         name = tool_call.name
         args = tool_call.arguments or {}
 
@@ -412,11 +285,8 @@ class UnifiedChatAgent:
             return self._handle_analyst_assess(self.rt, args)
         if name == "execution_desk.execute":
             return self._handle_execution_desk_execute(self.rt, args)
-        if name == "web.search":
-            return self._handle_web_search(self.rt, args)
 
-        # Registry tool
-        tool = self._registry._tools.get(name)
+        tool = self._registry.get(name)
         if tool is None:
             return {"error": f"unknown tool: {name}"}
         try:
@@ -434,25 +304,14 @@ class UnifiedChatAgent:
         except Exception as exc:  # noqa: BLE001
             return {"error": f"handler failed: {exc}"}
 
-    # ------------------------------------------------------------------ handlers
-
     def _handle_analyst_assess(
         self, rt: Runtime, args: dict[str, Any]
     ) -> dict[str, Any]:
-        symbol = args["symbol"]
-        timeframe = args.get("timeframe", "M15")
-        result = self.analyst.assess(symbol, timeframe)
-        structured = {
-            "kind": "analysis",
-            "symbol": result.symbol,
-            "timeframe": result.timeframe,
-            "signal": result.signal,
-            "p_up": result.p_up,
-            "edge_atr": result.edge_atr,
-            "draft_id": result.draft_id,
-            "rationale": result.rationale,
-        }
+        """Run full multi-source analysis via Analyst."""
+        analyst = Analyst(rt)
+        result = analyst.assess(args["symbol"], args.get("timeframe", "M15"))
         return {
+            "kind": "analysis",
             "symbol": result.symbol,
             "timeframe": result.timeframe,
             "signal": result.signal,
@@ -466,19 +325,11 @@ class UnifiedChatAgent:
     def _handle_execution_desk_execute(
         self, rt: Runtime, args: dict[str, Any]
     ) -> dict[str, Any]:
-        draft_id = args["draft_id"]
-        result = self.execution_desk.execute(draft_id)
-        structured = {
-            "kind": "execution",
-            "draft_id": draft_id,
-            "ok": result.ok,
-            "ticket": result.ticket,
-            "fill_price": result.fill_price,
-            "detail": result.detail,
-            "blocked": result.blocked,
-            "block_reason": result.block_reason,
-        }
+        """Execute a draft via ExecutionDesk."""
+        desk = ExecutionDesk(rt)
+        result = desk.execute(args["draft_id"])
         return {
+            "kind": "execution",
             "ok": result.ok,
             "ticket": result.ticket,
             "fill_price": result.fill_price,
@@ -490,12 +341,7 @@ class UnifiedChatAgent:
     def _handle_web_search(
         self, rt: Runtime, args: dict[str, Any]
     ) -> dict[str, Any]:
-        """Search the web for current market context.
-
-        Tries the configured search API first; falls back to DuckDuckGo
-        Instant Answer API (no API key required). Returns results or a
-        configuration message.
-        """
+        """Search the web for current market context."""
         query = args["query"]
         search_url = getattr(rt.settings, "search_api_url", None) or ""
         search_key = getattr(rt.settings, "search_api_key", None) or ""
@@ -514,18 +360,15 @@ class UnifiedChatAgent:
                         data = resp.json()
                         results = []
                         for item in data.get("items", data.get("results", []))[:5]:
-                            results.append(
-                                {
-                                    "title": item.get("title", ""),
-                                    "url": item.get("link", item.get("url", "")),
-                                    "snippet": item.get("snippet", item.get("description", "")),
-                                }
-                            )
+                            results.append({
+                                "title": item.get("title", ""),
+                                "url": item.get("link", item.get("url", "")),
+                                "snippet": item.get("snippet", item.get("description", "")),
+                            })
                         return {"results": results}
             except Exception:  # noqa: BLE001
                 pass
 
-        # No-key fallback: DuckDuckGo Instant Answer API (JSON, no parser needed)
         try:
             import httpx
 
@@ -539,13 +382,11 @@ class UnifiedChatAgent:
                     results = []
                     for topic in data.get("RelatedTopics", [])[:5]:
                         if isinstance(topic, dict) and topic.get("Text"):
-                            results.append(
-                                {
-                                    "title": topic.get("Text", "")[:120],
-                                    "url": topic.get("FirstURL", ""),
-                                    "snippet": topic.get("Text", ""),
-                                }
-                            )
+                            results.append({
+                                "title": topic.get("Text", "")[:120],
+                                "url": topic.get("FirstURL", ""),
+                                "snippet": topic.get("Text", ""),
+                            })
                     if results:
                         return {"results": results}
         except Exception:  # noqa: BLE001
@@ -556,17 +397,15 @@ class UnifiedChatAgent:
             "message": "Web search is not configured. Set SEARCH_API_URL and SEARCH_API_KEY to enable live web results.",
         }
 
-    # ------------------------------------------------------------------ messages
-
     def _build_messages(
         self,
         session_id: str,
         text: str,
         history: list[dict[str, Any]],
-    ) -> list[dict[str, str]]:
-        messages: list[dict[str, str]] = [
-            {"role": "system", "content": SYSTEM_PROMPT}
-        ]
+    ) -> list[dict[str, Any]]:
+        """Build message history for the model. ``session_id`` is accepted for
+        call-site symmetry; conversation history is passed in explicitly."""
+        messages: list[dict[str, Any]] = []
         chars = 0
         for message in reversed(history[-12:]):
             role = message.get("role")
@@ -575,7 +414,7 @@ class UnifiedChatAgent:
                 mapped = "user" if role == "user" else "assistant"
                 if chars + len(content) > 12000:
                     break
-                messages.insert(1, {"role": mapped, "content": content})
+                messages.insert(0, {"role": mapped, "content": content})
                 chars += len(content)
         messages.append({"role": "user", "content": text})
         return messages

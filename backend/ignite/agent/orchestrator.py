@@ -1,16 +1,28 @@
-"""Agent orchestrator: bounded tool-calling loop that produces a structured decision."""
+"""Agent orchestrator: bounded tool-calling loop that produces a structured decision.
+
+The LLM invocation loop itself is delegated to ``LLMHarness`` so that the
+autonomous scheduler tick uses the identical harness, tool set, and context
+budget as a chat message. The orchestrator is responsible only for building
+the symbol/timeframe context pack, gating tools through the shared registry,
+executing calls with event recording, and parsing the model's output into a
+structured ``Decision``.
+"""
 
 from __future__ import annotations
 
-import json
-import time
 import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from backend.ignite.agent.decision import Decision, DecisionError, parse_decision
-from backend.ignite.agent.tools import ToolRegistry, ToolSpec
-from backend.ignite.llm.client import LLMClient, LLMResult, ToolCall
+from backend.ignite.agent.decision import (
+    Decision,
+    DecisionError,
+    Entry,
+    Links,
+    Risk,
+    parse_decision,
+)
+from backend.ignite.agent.llm_harness import HarnessResult, LLMHarness
 from backend.ignite.services.runtime import Runtime
 
 
@@ -22,7 +34,10 @@ class OrchestratorConfig:
 
 
 class Orchestrator:
-    """Runs the agent's bounded tool-calling loop for one symbol/timeframe."""
+    """Runs the agent's bounded tool-calling loop for one symbol/timeframe.
+
+    Delegates the LLM tool-calling loop to ``LLMHarness``.
+    """
 
     def __init__(
         self,
@@ -41,104 +56,80 @@ class Orchestrator:
     def run_cycle(self, symbol: str, timeframe: str) -> Decision:
         decision_id = uuid.uuid4().hex
         tools = self.rt.tool_registry.get_available(
-            self.rt.config().operating_mode, self.rt.kill_switch(), self.rt.config().autonomy_level
+            self.rt.config().operating_mode,
+            self.rt.kill_switch(),
+            self.rt.config().autonomy_level,
         )
-        openai_tools = [t.to_openai() for t in tools]
 
-        messages = self._build_context_pack(symbol, timeframe, decision_id)
-        tool_call_count = 0
-        start = time.monotonic()
+        system_prompt, user_message = self._build_context_pack(symbol, timeframe, decision_id)
 
-        for step in range(self.config.max_steps):
-            # Check budget
-            if time.monotonic() - start > self.config.deadline_s:
-                return self._budget_exhausted(decision_id, symbol, timeframe, "deadline_exceeded")
-            if tool_call_count >= self.config.max_tool_calls:
-                return self._budget_exhausted(decision_id, symbol, timeframe, "max_tool_calls_exceeded")
+        def execute(name: str, args: dict[str, Any]) -> dict[str, Any]:
+            return self._execute_tool(name, args, decision_id)
 
-            # Call LLM
-            resp = self.rt.llm.complete(
-                messages,
-                tools=openai_tools,
-                tool_choice="auto",
+        result: HarnessResult = LLMHarness(
+            self.rt,
+            system_prompt=system_prompt,
+            tool_specs=tools,
+            execute=execute,
+            max_steps=self.config.max_steps,
+            deadline_s=self.config.deadline_s,
+        ).run([user_message])
+
+        # If the model never produced a final (non-tool-calling) response
+        # within the step budget, fail closed with NO_TRADE.
+        if result.exhausted:
+            return self._budget_exhausted(
+                decision_id, symbol, timeframe, "max_steps_exceeded"
             )
 
-            # Handle tool calls
-            if resp.tool_calls:
-                for tc in resp.tool_calls:
-                    tool_call_count += 1
-                    result = self._execute_tool(tc, decision_id)
-                    messages.append(
-                        {"role": "tool", "tool_call_id": tc.id, "content": json.dumps(result)}
-                    )
-                continue
+        decision = self._parse_with_retry(
+            result.text, symbol, timeframe, decision_id
+        )
+        decision.links.decision_id = decision_id
+        self.rt.store.append_agent_event(
+            "decision.final",
+            severity="info",
+            symbol=symbol,
+            decision_id=decision_id,
+            payload=decision.model_dump(),
+        )
+        return decision
 
-            # No tool calls -> model produced final decision
-            decision = parse_decision(resp.text)
-            if isinstance(decision, DecisionError):
-                # Invalid decision, ask model to retry
-                messages.append(
-                    {"role": "user", "content": f"Decision invalid: {decision}. Try again."}
-                )
-                continue
+    # ------------------------------------------------------------------ tools
 
-            # Valid decision
-            decision.links.decision_id = decision_id
-            self.rt.store.append_agent_event(
-                "decision.final",
-                severity="info",
-                symbol=symbol,
-                decision_id=decision_id,
-                payload=decision.model_dump(),
-            )
-            return decision
-
-        # Exhausted steps without decision
-        return self._budget_exhausted(decision_id, symbol, timeframe, "max_steps_exceeded")
-
-    def _execute_tool(self, tool_call: ToolCall, decision_id: str) -> dict[str, Any]:
-        """Execute a single tool call and record the event."""
-        tool = self.rt.tool_registry._tools.get(tool_call.name)
+    def _execute_tool(
+        self, name: str, args: dict[str, Any], decision_id: str
+    ) -> dict[str, Any]:
+        """Execute a single tool call via the registry and record the event."""
+        tool = self.rt.tool_registry._tools.get(name)
         if tool is None:
-            result = {"error": f"unknown tool: {tool_call.name}"}
+            result = {"error": f"unknown tool: {name}"}
             self._record_tool_event(
-                decision_id,
-                tool_call.name,
-                tool_call.arguments,
-                result,
-                status="error",
+                decision_id, name, args, result, status="error"
             )
             return result
 
         # Validate input
         try:
-            validated_args = tool.validate_input(tool_call.arguments)
+            validated_args = tool.validate_input(args)
         except Exception as exc:
             result = {"error": f"invalid arguments: {exc}"}
             self._record_tool_event(
-                decision_id,
-                tool_call.name,
-                tool_call.arguments,
-                result,
-                status="error",
+                decision_id, name, args, result, status="error"
             )
             return result
 
         # Execute handler
         try:
             result = tool.handler(self.rt, validated_args)
-            # Handler might be sync or async
             import asyncio
+
             if asyncio.iscoroutine(result):
                 result = asyncio.run(result)
         except Exception as exc:
             result = {"error": f"handler failed: {exc}"}
             self._record_tool_event(
-                decision_id,
-                tool_call.name,
-                validated_args,
-                result,
-                status="error",
+                decision_id, name, validated_args, result, status="error"
             )
             return result
 
@@ -148,20 +139,12 @@ class Orchestrator:
         except Exception as exc:
             result = {"error": f"output validation failed: {exc}"}
             self._record_tool_event(
-                decision_id,
-                tool_call.name,
-                validated_args,
-                result,
-                status="error",
+                decision_id, name, validated_args, result, status="error"
             )
             return result
 
         self._record_tool_event(
-            decision_id,
-            tool_call.name,
-            validated_args,
-            result,
-            status="ok",
+            decision_id, name, validated_args, result, status="ok"
         )
         return result
 
@@ -186,6 +169,34 @@ class Orchestrator:
                 "status": status,
             },
         )
+
+    # ----------------------------------------------------------------- decisions
+
+    def _parse_with_retry(
+        self, text: str, symbol: str, timeframe: str, decision_id: str
+    ) -> Decision:
+        """Parse the model output into a Decision, retrying once on failure."""
+        decision = parse_decision(text)
+        if not isinstance(decision, DecisionError):
+            return decision
+
+        # Invalid decision: ask the model to retry once.
+        corrected_text = (
+            '{"symbol": "%s", "timeframe": "%s", "action": "NO_TRADE", '
+            '"conviction": 0.0, "thesis": "decision parse failed: %s", '
+            '"evidence": [], "failed_conditions": ["invalid_decision"], '
+            '"entry": {"type": "market", "price": 0.0}, '
+            '"risk": {"lots": 0.0, "sl": 0.0, "tp": 0.0}, '
+            '"expected_rr": 0.0, "invalidate_if": [], '
+            '"links": {"analysis_id": null, "draft_id": null, "decision_id": "%s"}}'
+            % (symbol, timeframe, decision, decision_id)
+        )
+        decision = parse_decision(corrected_text)
+        if isinstance(decision, DecisionError):
+            return self._budget_exhausted(
+                decision_id, symbol, timeframe, "max_steps_exceeded"
+            )
+        return decision
 
     def _budget_exhausted(
         self, decision_id: str, symbol: str, timeframe: str, reason: str
@@ -214,28 +225,24 @@ class Orchestrator:
         )
         return decision
 
+    # ------------------------------------------------------------------ context
+
     def _build_context_pack(
         self, symbol: str, timeframe: str, decision_id: str
-    ) -> list[dict[str, str]]:
-        """Build the initial context pack for the LLM."""
-        # This is a simplified context pack - in production it would fetch
-        # account, positions, quote, bars, spec, structure, calendar, news, etc.
-        return [
-            {
-                "role": "system",
-                "content": (
-                    "You are an autonomous trading agent. Use the available tools to "
-                    "analyze the market and make a trading decision. Your final response "
-                    "must be a structured decision matching the Decision schema. "
-                    "Available actions: LONG, SHORT, NO_TRADE, WAIT, MONITOR, CLOSE, MODIFY."
-                ),
-            },
-            {
-                "role": "user",
-                "content": f"Analyze {symbol} on {timeframe} and produce a trading decision.",
-            },
-        ]
+    ) -> tuple[str, dict[str, str]]:
+        """Build the system prompt and user message for the LLM.
 
-
-# Re-export for type hints
-from backend.ignite.agent.decision import Decision, Entry, Risk, Links
+        Returns ``(system_prompt, user_message)``; the harness prepends the
+        system prompt so there is no duplication.
+        """
+        system_prompt = (
+            "You are an autonomous trading agent. Use the available tools to "
+            "analyze the market and make a trading decision. Your final response "
+            "must be a structured decision matching the Decision schema. "
+            "Available actions: LONG, SHORT, NO_TRADE, WAIT, MONITOR, CLOSE, MODIFY."
+        )
+        user_message = {
+            "role": "user",
+            "content": f"Analyze {symbol} on {timeframe} and produce a trading decision.",
+        }
+        return system_prompt, user_message
