@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from backend.ignite.services.broker import (
@@ -19,7 +19,7 @@ from backend.ignite.services.broker import (
     send_market_order,
 )
 from backend.ignite.services.runtime import Runtime
-from backend.ignite.store.db import utc_now
+from backend.ignite.store.db import utc_now, uuid_suffix
 
 
 class ExecutionError(RuntimeError):
@@ -266,6 +266,7 @@ def execute_draft(
 
         comment = f"ignite {draft_id[:8]}"
         sent: dict[str, Any] | None = None
+        reconciled_position: dict[str, Any] | None = None
         try:
             sent = send_market_order(rt.mcp, symbol, order_side, lots, sl, tp, comment)
         except Exception as exc:  # noqa: BLE001 - record exactly what the broker said
@@ -273,6 +274,7 @@ def execute_draft(
             # Reconcile the terminal before recording a failure or allowing retry.
             position = _await_position(rt, symbol, before, timeout_s=2.0)
             if position is not None:
+                reconciled_position = position
                 sent = {
                     "reconciled_after_error": str(exc),
                     "position_id": position["ticket"],
@@ -311,7 +313,7 @@ def execute_draft(
                 ) from exc
 
         order_id, position_id = extract_order_ticket(sent)
-        position = _await_position(rt, symbol, before, timeout_s=10.0)
+        position = reconciled_position or _await_position(rt, symbol, before, timeout_s=10.0)
         filled_price = position["price_open"] if position else None
         final_state = "filled" if position else "unconfirmed"
         position_id = (position["ticket"] if position else position_id)
@@ -392,6 +394,77 @@ def execute_draft_autonomous(rt: Runtime, draft_id: str) -> dict[str, Any]:
         token=token,
         actor="agent",
     )
+
+
+def create_draft(
+    rt: Runtime,
+    *,
+    analysis_id: str,
+    side: str,
+    lots: float,
+    reference_price: float,
+    sl: float,
+    tp: float,
+    ttl_s: int | None = None,
+) -> dict[str, Any]:
+    """Create a time-limited order draft pending confirmation.
+
+    Fail-closed: the draft references an analysis row (foreign key), so a
+    missing analysis means no draft and no trade. Risk figures are
+    best-effort; the execution guard set re-validates everything at send time.
+    """
+    if ttl_s is None:
+        ttl_s = rt.settings.draft_ttl_s
+    now = datetime.now(timezone.utc)
+    expires_at = (now + timedelta(seconds=ttl_s)).isoformat()
+    draft_id = uuid.uuid4().hex
+
+    analysis = rt.store.get_analysis(analysis_id) if analysis_id else None
+    if analysis is None:
+        raise ValueError(f"cannot create draft: analysis {analysis_id} not found")
+
+    symbol = analysis["symbol"]
+    risk_usd = risk_pct = rr = None
+    try:
+        spec = rt.spec(symbol)
+        risk_usd = round(float(lots) * float(spec.contract_size) * abs(float(reference_price) - float(sl)), 2)
+        equity = float((rt.account() or {}).get("equity") or 0.0)
+        if equity > 0:
+            risk_pct = round(risk_usd / equity, 6)
+        sl_distance = abs(float(reference_price) - float(sl))
+        tp_distance = abs(float(tp) - float(reference_price))
+        if sl_distance > 0:
+            rr = round(tp_distance / sl_distance, 3)
+    except Exception:  # noqa: BLE001 - risk figures are advisory, never blocking
+        pass
+
+    draft = {
+        "id": draft_id,
+        "analysis_id": analysis_id,
+        "created_at": now.isoformat(),
+        "expires_at": expires_at,
+        "state": "draft",
+        "side": side,
+        "lots": lots,
+        "reference_price": reference_price,
+        "sl": sl,
+        "tp": tp,
+        "risk_usd": risk_usd,
+        "risk_pct": risk_pct,
+        "rr": rr,
+        "margin": None,
+        "worst_case_usd": None,
+        "blocked": 0,
+        "block_reason": None,
+        "idempotency_key": f"{analysis_id}:{side}:{lots}:{uuid_suffix()}",
+    }
+    rt.store.insert_draft(draft)
+    rt.store.audit(
+        "agent",
+        "draft_created",
+        {"draft_id": draft_id, "analysis_id": analysis_id, "symbol": symbol, "side": side, "lots": lots},
+    )
+    return draft
 
 
 def _await_position(
