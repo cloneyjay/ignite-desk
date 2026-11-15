@@ -309,9 +309,7 @@ class PositionManager:
         try:
             row = self.rt.store.latest_analysis(symbol, self.config.timeframe)
             if row:
-                features = row.get("features")
-                if not isinstance(features, dict):
-                    features = json.loads(row.get("features_json") or "{}")
+                features = json.loads(row.get("features_json") or "{}")
                 atr = features.get("atr")
                 return float(atr) if atr is not None else None
         except Exception:
