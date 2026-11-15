@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from dataclasses import replace
 from types import SimpleNamespace
+from uuid import uuid4
 
 import numpy as np
 import pytest
@@ -12,6 +15,7 @@ from backend.ignite.analysis.risk import SymbolSpec, plan
 from backend.ignite.config import MCPSettings, Settings
 from backend.ignite.services.execution import (
     ExecutionError,
+    create_draft,
     evaluate_draft,
     execute_draft,
 )
@@ -260,9 +264,116 @@ def test_broker_rejection_is_recorded_not_retried(rt):
     assert len(rt.mcp.called("trade_send_market_order")) == 1
 
 
+def test_reconcile_fills_draft_when_send_error_but_position_exists(rt):
+    """send_market_order raises (transport error after MT5 accepted), reconcile
+    finds an existing position, so the draft ends filled using the reconciled
+    position (skipping the redundant 10 s poll)."""
+    _, draft_id = seed_draft(rt)
+    fake: FakeMCP = rt.mcp
+    fake.send_ok = False  # transport error: MT5 accepted, response lost
+
+    reconciled = {
+        "position_id": "900042",
+        "symbol": "XAUUSD",
+        "side": "buy",
+        "volume": 0.01,
+        "price_open": 3930.13,
+        "price_last": 3930.20,
+    }
+
+    # Simulate the position appearing on the terminal while _await_position
+    # polls (before is empty because no_open_position requires a clean slate).
+    def appear_later() -> None:
+        time.sleep(0.1)
+        fake.positions.append(dict(reconciled))
+
+    threading.Thread(target=appear_later, daemon=True).start()
+
+    token = token_for(rt, draft_id)
+    result = execute_draft(rt, draft_id, confirm=True, token=token)
+
+    assert result["state"] == "filled"
+    assert result["confirmed"] is True
+    assert result["position"]["ticket"] == "900042"
+    assert float(result["position"]["price_open"]) == pytest.approx(3930.13)
+    assert float(result["order"]["filled_price"]) == pytest.approx(3930.13)
+    assert fake.called("trade_send_market_order")
+    assert rt.store.get_draft(draft_id)["state"] == "filled"
+
+
 def test_order_is_never_sent_without_stops(rt):
     from backend.ignite.services.broker import send_market_order
 
     with pytest.raises(Exception):
         send_market_order(rt.mcp, "XAUUSD", "buy", 0.01, 0.0, 0.0, "test")
     assert not rt.mcp.called("trade_send_market_order")
+
+
+def _seed_analysis(rt) -> str:
+    spec = SymbolSpec(
+        symbol="XAUUSD",
+        digits=2,
+        point=0.01,
+        contract_size=100.0,
+        tick_value=0.1,
+        volume_min=0.01,
+        volume_max=100.0,
+        volume_step=0.01,
+        stops_level=0,
+    )
+    draft_plan = plan("long", 3930.13, 10.0, 3000.0, spec, 13.0)
+    analysis_id = f"a{uuid4().hex[:8]}"
+    signal = SimpleNamespace(
+        side="long", p_up=0.8, edge=8.0, edge_atr=0.8, dispersion=1.0,
+        reasons=("test",), version="signal.v1",
+    )
+    features = SimpleNamespace(
+        atr=10.0, last_close=3930.0, last_time="2026-11-12 08:30:00",
+        ema_fast=3931.0, ema_slow=3925.0, realized_vol_pct=0.1,
+        spread_points=13.0, trend="up",
+    )
+    result = SimpleNamespace(
+        analysis_id=analysis_id, draft_id=f"d{uuid4().hex[:8]}", created_at=utc_now(),
+        symbol="XAUUSD", timeframe="M15", last_bar_time="2026-11-12 08:30:00",
+        lookback=288, horizon=12, samples=25, model_id="fake-kronos",
+        infer_s=0.1, features=features, signal=signal,
+        paths=np.zeros((2, 2)), draft=draft_plan, risk_version="risk.v1",
+    )
+    rt.store.save_analysis(result, 90)
+    return analysis_id
+
+
+def test_create_draft_persists_and_audits(rt):
+    analysis_id = _seed_analysis(rt)
+    draft = create_draft(
+        rt,
+        analysis_id=analysis_id,
+        side="long",
+        lots=0.01,
+        reference_price=3930.13,
+        sl=3920.0,
+        tp=3950.0,
+    )
+    assert draft["state"] == "draft"
+    assert draft["side"] == "long"
+    assert draft["lots"] == 0.01
+    assert draft["analysis_id"] == analysis_id
+    got = rt.store.get_draft(draft["id"])
+    assert got is not None
+    assert got["id"] == draft["id"]
+    # Audit trail recorded the creation.
+    audit = rt.store.get_audit_log()
+    assert any(row["action"] == "draft_created" for row in audit)
+
+
+def test_create_draft_rejects_missing_analysis(rt):
+    with pytest.raises(ValueError):
+        create_draft(
+            rt,
+            analysis_id="does-not-exist",
+            side="long",
+            lots=0.01,
+            reference_price=3930.13,
+            sl=3920.0,
+            tp=3950.0,
+        )
