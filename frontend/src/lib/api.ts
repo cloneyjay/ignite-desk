@@ -29,7 +29,6 @@ import type {
   Trade,
   TradeStats,
 } from "./types";
-import { getAuthHeader } from "./auth";
 
 export class ApiError extends Error {
   status: number;
@@ -57,21 +56,11 @@ export function getApiBase(): string {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const method = (init?.method ?? "GET").toUpperCase();
-  const isMutating = ["POST", "PUT", "DELETE", "PATCH"].includes(method);
-  
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (init?.headers) {
     Object.assign(headers, init.headers);
   }
-  
-  if (isMutating) {
-    const authHeader = getAuthHeader();
-    if (authHeader) {
-      Object.assign(headers, authHeader);
-    }
-  }
-  
+
   if (init?.headers) {
     Object.assign(headers, init.headers);
   }
@@ -90,11 +79,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
   }
   if (!response.ok) {
-    if (response.status === 401) {
-      // Clear auth token on 401
-      const { clearStoredToken } = await import("./auth");
-      clearStoredToken();
-    }
     const envelope = (body as { error?: { code?: string; message?: string; detail?: unknown } })
       ?.error;
     throw new ApiError(
