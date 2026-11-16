@@ -185,6 +185,24 @@ class Store:
         ).fetchone()
         return dict(row) if row else None
 
+    def analyses_between(
+        self, symbol: str, timeframe: str, since_iso: str, until_iso: str
+    ) -> list[dict[str, Any]]:
+        """Journaled forecasts in a window, oldest first (Goal 5 baselines).
+
+        These are forecasts the desk actually made live — replaying them is
+        out-of-sample by construction, not a refit on history.
+        """
+        rows = self._conn.execute(
+            """
+            SELECT * FROM analyses
+            WHERE symbol=? AND timeframe=? AND created_at>=? AND created_at<=?
+            ORDER BY created_at ASC
+            """,
+            (symbol, timeframe, since_iso, until_iso),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def paths(self, analysis_id: str) -> list[list[float]]:
         rows = self._conn.execute(
             "SELECT path_json FROM forecast_paths WHERE analysis_id=? ORDER BY sample_idx",
