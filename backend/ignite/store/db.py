@@ -913,7 +913,8 @@ class Store:
                 r_multiple=excluded.r_multiple,
                 last_synced_at=excluded.last_synced_at,
                 broker_snapshot_json=excluded.broker_snapshot_json,
-                status=excluded.status
+                status=excluded.status,
+                decision_id=COALESCE(excluded.decision_id, agent_positions.decision_id)
             """,
             (
                 pos["ticket"],

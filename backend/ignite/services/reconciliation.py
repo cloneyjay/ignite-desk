@@ -122,12 +122,28 @@ class ReconciliationService:
                 volume = float(trade.get("volume") or agent_pos["volume"])
                 sl = float(trade.get("sl") or agent_pos.get("sl") or 0.0)
                 
-                # Calculate initial risk
-                if sl and entry:
-                    risk_per_lot = abs(entry - sl)
-                    initial_risk = risk_per_lot * volume * self.rt.spec(symbol).contract_size
-                else:
-                    initial_risk = 1.0
+                # Use stored initial risk if available to avoid ad-hoc recomputation
+                initial_risk = agent_pos.get("initial_risk_usd")
+                if not initial_risk:
+                    # Fallback to stored risk from draft via decision_id if we can resolve it
+                    decision_id = agent_pos.get("decision_id")
+                    if decision_id:
+                        # Try to resolve risk from orders table via decision_id
+                        try:
+                            row = self.rt.store._conn.execute(
+                                "SELECT risk_usd FROM orders WHERE id=? LIMIT 1",
+                                (decision_id,),
+                            ).fetchone()
+                            if row and row["risk_usd"]:
+                                initial_risk = float(row["risk_usd"])
+                        except Exception:
+                            initial_risk = None
+                if not initial_risk:
+                    if sl and entry:
+                        risk_per_lot = abs(entry - sl)
+                        initial_risk = risk_per_lot * volume * self.rt.spec(symbol).contract_size
+                    else:
+                        initial_risk = 1.0
                 
                 r_multiple = net / initial_risk if initial_risk > 0 else 0.0
                 
@@ -172,6 +188,8 @@ class ReconciliationService:
         tp = live_pos.get("tp")
         open_time = live_pos.get("open_time") or live_pos.get("create_time")
         
+        decision_id = self.rt.store.decision_id_for_ticket(ticket)
+        
         self.rt.store.upsert_agent_position({
             "ticket": ticket,
             "symbol": symbol,
@@ -181,7 +199,7 @@ class ReconciliationService:
             "sl": sl,
             "tp": tp,
             "opened_at": open_time,
-            "managed_by_agent": 1,
+            "managed_by_agent": 1 if decision_id else 0,
             "trail_sl": sl,
             "scale_in_count": 0,
             "scale_out_count": 0,
@@ -190,6 +208,7 @@ class ReconciliationService:
             "last_managed_at": datetime.now(timezone.utc).isoformat(),
             "status": "adopted",
             "broker_snapshot_json": json.dumps(live_pos),
+            "decision_id": decision_id,
         })
         
         return ReconciliationResult(

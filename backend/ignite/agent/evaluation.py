@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime
 from typing import Any
 
 from backend.ignite.services.runtime import Runtime
@@ -63,7 +64,18 @@ def promotion_eligibility(
     closed = [
         r for r in rows if r.get("executed") and r.get("r_multiple") is not None
     ]
-    closed_chrono = sorted(closed, key=lambda r: str(r.get("closed_at") or ""))
+
+    def _parse_closed_at(r):
+        ts = r.get("closed_at")
+        if not ts:
+            return datetime.min
+        try:
+            # fromisoformat handles ISO 8601 with offset
+            return datetime.fromisoformat(ts)
+        except Exception:
+            return datetime.min
+
+    closed_chrono = sorted(closed, key=_parse_closed_at)
     rs = [float(r["r_multiple"]) for r in closed_chrono]
     stats = summarize_outcomes(rows)
 

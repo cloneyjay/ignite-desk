@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import random
+import threading
 from typing import Any
 
 import pandas as pd
@@ -39,6 +40,8 @@ from backend.ignite.store.db import utc_now
 
 BARS_PER_DAY_M15 = 96
 DEFAULT_MAX_HOLD_BARS = 96  # one trading day on M15
+
+_baseline_cache_lock = threading.Lock()
 
 
 def _atr_series(bars: pd.DataFrame, period: int = 14) -> pd.Series:
@@ -69,34 +72,36 @@ def simulate_trade(
 
     SL/TP are checked from the entry bar onward. Returns
     ``{"r_multiple", "exit_reason", "bars_held", "exit_price"}`` or None when
-    the entry is out of range. Costs in price units: spread + slippage at
-    entry (long buys at ask), spread + slippage on stop and market exits for
-    shorts (they buy back at ask), slippage on stop exits for longs.
+    the entry is out of range. Costs are modelled symmetrically for long/short:
+    entry at ask/bid with spread/2 + slippage, exits at bid/ask with spread/2 and
+    slippage on stops. SL/TP are computed from the effective entry price.
     """
     if entry_idx < 0 or entry_idx >= len(bars) or sl_distance <= 0:
         return None
     entry_bar = bars.iloc[entry_idx]
 
-    def spread_of(bar: pd.Series) -> float:
-        pts = spread_points if spread_points is not None else float(
-            bar.get("spread") or 0.0
-        )
-        return (pts + slippage_points) * point
+    def bar_spread(bar: pd.Series) -> float:
+        pts = spread_points if spread_points is not None else float(bar.get("spread") or 0.0)
+        return pts * point
 
-    entry = float(entry_bar["open"])
+    slippage_cost = slippage_points * point
+    entry_mid = float(entry_bar["open"])
+
+    spread_entry = bar_spread(entry_bar)
     if side == "LONG":
-        entry_eff = entry + spread_of(entry_bar)  # buy at ask
-        sl_price = entry - sl_distance
-        tp_price = entry + tp_distance
+        entry_eff = entry_mid + spread_entry / 2.0 + slippage_cost
+        sl_price = entry_eff - sl_distance
+        tp_price = entry_eff + tp_distance
     else:
-        entry_eff = entry  # sell at bid
-        sl_price = entry + sl_distance
-        tp_price = entry - tp_distance
+        entry_eff = entry_mid - spread_entry / 2.0 - slippage_cost
+        sl_price = entry_eff + sl_distance
+        tp_price = entry_eff - tp_distance
 
     last_idx = min(entry_idx + max_hold_bars, len(bars) - 1)
     for i in range(entry_idx, last_idx + 1):
         bar = bars.iloc[i]
-        sp = spread_of(bar)
+        spread_cur = bar_spread(bar)
+
         if side == "LONG":
             sl_hit = float(bar["low"]) <= sl_price
             tp_hit = float(bar["high"]) >= tp_price
@@ -110,22 +115,22 @@ def simulate_trade(
 
         if sl_hit:  # conservative: SL wins even when TP was touched same-bar
             if side == "LONG":
-                exit_eff = sl_price - slippage_points * point
+                exit_eff = sl_price - spread_cur / 2.0 - slippage_cost
             else:
-                exit_eff = sl_price + sp
+                exit_eff = sl_price + spread_cur / 2.0 + slippage_cost
             reason = "SL"
         elif tp_hit:
             if side == "LONG":
-                exit_eff = tp_price  # sell at bid
+                exit_eff = tp_price - spread_cur / 2.0
             else:
-                exit_eff = tp_price + sp  # buy back at ask
+                exit_eff = tp_price + spread_cur / 2.0
             reason = "TP"
         elif i == last_idx:
             # Timeout or end of data: forced market exit at close.
             if side == "LONG":
-                exit_eff = float(bar["close"])
+                exit_eff = float(bar["close"]) - spread_cur / 2.0
             else:
-                exit_eff = float(bar["close"]) + sp
+                exit_eff = float(bar["close"]) + spread_cur / 2.0
             reason = "TIMEOUT"
         else:
             continue
@@ -163,13 +168,22 @@ def kronos_baseline(
     """
     rs: list[float] = []
     times = pd.to_datetime(bars["time"])
+    # Normalize to naive UTC
+    if times.dt.tz is not None:
+        times = times.dt.tz_convert("UTC")
+    times = times.dt.tz_localize(None)
+    # Ensure monotonic
+    assert times.is_monotonic_increasing
     open_until = -1
     for fc in forecasts:
         atr = fc.get("atr")
         if atr is None or float(atr) <= 0:
             continue
         created = pd.to_datetime(fc["created_at"])
-        created = created.tz_localize(None) if created.tzinfo is None else created.tz_convert(None)
+        # Normalize to naive UTC
+        if isinstance(created, pd.Timestamp):
+            if created.tz is not None:
+                created = created.tz_convert("UTC").tz_localize(None)
         # First bar whose open is at/after the forecast was published — the
         # first bar a market entry could realistically happen (no lookahead).
         idx = int(times.searchsorted(created))
@@ -303,15 +317,16 @@ def baseline_report(
     # Cache a compact summary for the LLM's context pack (Goal 5 criterion 5):
     # the heavy simulation runs daily / on demand, the cycle reads a setting.
     summary_key = "agent_baseline_summary"
-    try:
-        cached = json.loads(rt.store.setting(summary_key) or "{}")
-    except Exception:  # noqa: BLE001
-        cached = {}
-    cached[symbol] = {
-        "created_at": utc_now(),
-        "agent_sum_r": report["agent"]["sum_r"],
-        "kronos_sum_r": report["kronos"]["sum_r"],
-        "random_sum_r": report["random"]["sum_r"],
-    }
-    rt.store.set_setting(summary_key, json.dumps(cached))
+    with _baseline_cache_lock:
+        try:
+            cached = json.loads(rt.store.setting(summary_key) or "{}")
+        except Exception:  # noqa: BLE001
+            cached = {}
+        cached[symbol] = {
+            "created_at": utc_now(),
+            "agent_sum_r": report["agent"]["sum_r"],
+            "kronos_sum_r": report["kronos"]["sum_r"],
+            "random_sum_r": report["random"]["sum_r"],
+        }
+        rt.store.set_setting(summary_key, json.dumps(cached))
     return report

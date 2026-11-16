@@ -42,8 +42,8 @@ def test_simulate_long_hits_tp():
     bars.loc[2, "high"] = 102.5
     result = simulate_trade(bars, 0, "LONG", 1.0, 2.0, POINT, slippage_points=0.0)
     assert result["exit_reason"] == "TP"
-    # entry at ask = 100.10 (spread 10 pts + slip 0), exit at TP 102.00 bid
-    expected_r = (102.0 - 100.10) / 1.0
+    # entry at ask = 100 + spread/2 = 100.05, TP price = entry_eff + 2 = 102.05, exit at TP - spread/2 = 102.00
+    expected_r = (102.00 - 100.05) / 1.0
     assert result["r_multiple"] == round(expected_r, 4)
 
 
@@ -51,8 +51,8 @@ def test_simulate_long_hits_sl():
     bars = _bars([100.0, 98.5])
     result = simulate_trade(bars, 0, "LONG", 1.0, 2.0, POINT, slippage_points=0.0)
     assert result["exit_reason"] == "SL"
-    # exit at SL 99.00 minus slippage, entry at ask 100.10
-    expected_r = (99.0 - 100.10) / 1.0
+    # entry at ask = 100 + spread/2 = 100.05, SL price = 99.05, exit at SL - spread/2 = 99.00
+    expected_r = (99.00 - 100.05) / 1.0
     assert result["r_multiple"] == round(expected_r, 4)
 
 
@@ -69,8 +69,8 @@ def test_simulate_short_costs_spread_on_exit():
     bars = _bars([100.0, 102.5])
     result = simulate_trade(bars, 0, "SHORT", 1.0, 2.0, POINT, slippage_points=0.0)
     assert result["exit_reason"] == "SL"
-    # short entry at bid 100.00; SL 101.00 hit on high; buy back at ask 101.10
-    expected_r = (100.0 - 101.10) / 1.0
+    # short entry at bid = 100 - spread/2 = 99.95, SL price = 100.95, exit at SL + spread/2 = 101.00
+    expected_r = (99.95 - 101.00) / 1.0
     assert result["r_multiple"] == round(expected_r, 4)
 
 
