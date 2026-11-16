@@ -1249,6 +1249,10 @@ class ToolRegistry:
         """Return one tool by name, or None if it is not registered."""
         return self._tools.get(name)
 
+    def names(self) -> list[str]:
+        """All registered tool names (unfiltered — for fingerprinting)."""
+        return list(self._tools)
+
     def get_allowed(
         self, name: str, mode: str, kill_switch: bool, autonomy_level: int = 0
     ) -> ToolSpec | None:

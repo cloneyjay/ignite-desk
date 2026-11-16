@@ -23,7 +23,8 @@ from typing import Any, Literal
 
 from backend.ignite.agent.config import AgentConfig
 from backend.ignite.agent.decision import Decision
-from backend.ignite.agent.orchestrator import Orchestrator
+from backend.ignite.agent.evaluation import harness_fingerprint
+from backend.ignite.agent.orchestrator import SYSTEM_PROMPT, Orchestrator
 from backend.ignite.services.execution import ExecutionError, execute_draft_autonomous
 from backend.ignite.services.runtime import Runtime
 
@@ -164,6 +165,24 @@ class AgentEngine:
         decision = orchestrator.run_cycle(symbol, timeframe)
         meta = orchestrator.last_run
 
+        # Goal 5: pin the decision harness (provider, model, prompt, tools).
+        # A change resets evaluation to shadow — the measured stats no longer
+        # describe the current trader.
+        fingerprint = harness_fingerprint(
+            meta.get("provider"),
+            meta.get("model"),
+            SYSTEM_PROMPT,
+            self.rt.tool_registry.names(),
+        )
+        previous_fingerprint = self.rt.store.setting("agent_eval_fingerprint")
+        if previous_fingerprint is None:
+            self.rt.store.set_setting("agent_eval_fingerprint", fingerprint)
+        elif previous_fingerprint != fingerprint:
+            self.rt.auto_demote(
+                "harness change: model/prompt/tools", to_shadow=True
+            )
+            self.rt.store.set_setting("agent_eval_fingerprint", fingerprint)
+
         is_entry = decision.action in ("LONG", "SHORT")
         p_up, edge_atr = self._signal_numbers(decision.links.analysis_id)
 
@@ -292,9 +311,10 @@ class AgentEngine:
         if not pnl.available:
             return GuardResult(ok=False, reason="daily_pnl_unavailable")
         if pnl.blocked:
-            return GuardResult(
-                ok=False, reason=f"Daily loss limit hit: {pnl.total_usd:.2f}"
-            )
+            reason = f"Daily loss limit hit: {pnl.total_usd:.2f}"
+            # Goal 5: a drawdown that trips the breaker steps autonomy down.
+            self.rt.auto_demote(reason)
+            return GuardResult(ok=False, reason=reason)
 
         positions = self.rt.store.agent_positions()
         if len(positions) >= config.max_concurrent_positions:
@@ -302,6 +322,8 @@ class AgentEngine:
 
         streak = self._loss_streak_guard(config.max_consecutive_losses)
         if not streak.ok:
+            # Goal 5: a loss streak steps autonomy down one ladder level.
+            self.rt.auto_demote(streak.reason)
             return streak
 
         return GuardResult(ok=True)

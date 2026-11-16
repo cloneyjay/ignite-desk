@@ -8,7 +8,12 @@ from __future__ import annotations
 
 import json
 
-from backend.ignite.agent.evaluation import compact_feedback, summarize_outcomes
+from backend.ignite.agent.evaluation import (
+    compact_feedback,
+    harness_fingerprint,
+    summarize_outcomes,
+)
+from backend.ignite.agent.engine import AgentEngine
 from backend.ignite.store.db import Store, utc_now
 
 
@@ -118,6 +123,54 @@ def test_summarize_outcomes_empty():
     assert stats["closed"] == 0
     assert stats["avg_r"] is None
     assert stats["win_rate"] is None
+
+
+def test_harness_fingerprint_changes_on_model_or_prompt_change():
+    base = harness_fingerprint("nvidia", "m1", "prompt", ["a", "b"])
+    assert base == harness_fingerprint("nvidia", "m1", "prompt", ["b", "a"])
+    assert base != harness_fingerprint("nvidia", "m2", "prompt", ["a", "b"])
+    assert base != harness_fingerprint("nvidia", "m1", "other prompt", ["a", "b"])
+    assert base != harness_fingerprint("nvidia", "m1", "prompt", ["a", "b", "c"])
+
+
+def test_engine_resets_evaluation_to_shadow_on_model_change(rt):
+    """PRD Goal 5: a model change resets evaluation to shadow."""
+    from backend.ignite.llm.client import LLMResult
+
+    class FakeLLM:
+        def __init__(self):
+            self.model = "model-a"
+
+        def complete(self, messages, tools=None, tool_choice="auto", **kwargs):
+            return LLMResult(
+                text=json.dumps({
+                    "symbol": "XAUUSD", "timeframe": "M15", "action": "NO_TRADE",
+                    "conviction": 0.0, "thesis": "t", "evidence": [],
+                    "failed_conditions": [],
+                    "entry": {"type": "market", "price": 0.0},
+                    "risk": {"lots": 0.0, "sl": 0.0, "tp": 0.0},
+                    "expected_rr": 0.0, "invalidate_if": [],
+                    "links": {"analysis_id": None, "draft_id": None,
+                              "decision_id": "d"},
+                }),
+                provider="fake",
+                model=self.model,
+                latency_ms=1,
+            )
+
+    rt.config_service.update({"enabled": True, "operating_mode": "autonomous", "execution_mode": "live"})
+    llm = FakeLLM()
+    rt.llm = llm  # type: ignore[method-assign]
+    rt.realised_override = 0.0
+
+    engine = AgentEngine(rt, rt.config())
+    engine.run_cycle()
+    assert rt.config().execution_mode == "live"  # first sight only pins
+
+    llm.model = "model-b"
+    engine.run_cycle()
+    assert rt.config().execution_mode == "shadow"
+    assert rt.store.setting("agent_eval_fingerprint") != ""
 
 
 def test_compact_feedback_mentions_stats_and_trades(rt):

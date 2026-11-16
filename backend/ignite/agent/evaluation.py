@@ -18,6 +18,7 @@ deliberately does not claim or gate on them yet.
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from backend.ignite.services.runtime import Runtime
@@ -63,6 +64,24 @@ def _fmt(value: float | None, suffix: str = "") -> str:
     if value is None:
         return "n/a"
     return f"{value:+.2f}{suffix}"
+
+
+def harness_fingerprint(
+    provider: str | None, model: str | None, system_prompt: str, tool_names: list[str]
+) -> str:
+    """Stable fingerprint of the decision harness (PRD Goal 5).
+
+    A change in model, system prompt, or the tool registry means the measured
+    statistics no longer describe the current trader: the evaluation resets to
+    shadow. Pure function; the engine supplies the pieces and compares.
+    """
+    digest = hashlib.sha256()
+    digest.update((provider or "").encode())
+    digest.update((model or "").encode())
+    digest.update(system_prompt.encode())
+    for name in sorted(tool_names):
+        digest.update(name.encode())
+    return digest.hexdigest()[:16]
 
 
 def compact_feedback(rt: Runtime, limit: int = 30) -> str:

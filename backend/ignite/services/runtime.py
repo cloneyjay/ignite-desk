@@ -320,6 +320,40 @@ class Runtime:
 
         return {"ok": True, "mode": "shadow"}
 
+    # Goal 5 autonomy ladder, low end first: demotion steps down one level.
+    _MODE_LADDER = ("shadow", "demo", "live")
+
+    def auto_demote(self, reason: str, to_shadow: bool = False) -> dict[str, Any]:
+        """Step the execution mode down on measured degradation.
+
+        PRD Goal 5: autonomy is withdrawn automatically on drawdown or loss
+        streak, and a model/prompt/tool change resets evaluation to shadow.
+        Automatic because it only reduces risk — the PRD requires operator
+        confirmation for promotion, never for demotion. Promotion back stays
+        manual (``promote_mode``).
+        """
+        current = self.config().execution_mode
+        if current not in self._MODE_LADDER:
+            return {"ok": False, "error": f"unknown execution mode {current}"}
+        if current == "shadow":
+            return {"ok": False, "error": "already in shadow mode"}
+        if to_shadow:
+            target = "shadow"
+        else:
+            target = self._MODE_LADDER[self._MODE_LADDER.index(current) - 1]
+
+        self.config_service.update({"execution_mode": target})
+        self.store.audit(
+            "agent",
+            "mode_auto_demoted",
+            {"from": current, "to": target, "reason": reason},
+            "ok",
+        )
+        self.events.publish(
+            "mode.demoted", {"from": current, "to": target, "reason": reason}
+        )
+        return {"ok": True, "mode": target, "reason": reason}
+
     def seed_symbols(self) -> None:
         if self.store.list_symbols():
             return
