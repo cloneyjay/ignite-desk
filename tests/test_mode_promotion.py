@@ -41,15 +41,18 @@ def _seed_trade(
 
 
 def _seed_qualifying_evidence(rt) -> None:
-    """30 closed trades that pass PROMOTION_THRESHOLDS_V1.
+    """60 closed trades that pass PROMOTION_THRESHOLDS_V1.
 
     20 wins (+1.5R), 5 losses (-1.0R), 5 wins (+1.5R): sum +32.5R,
     win rate 0.833, drawdown 5R (peak 30 → trough 25).
+    Repeated twice to reach 60 trades.
     """
     n = 0
-    for r in [1.5] * 20 + [-1.0] * 5 + [1.5] * 5:
-        _seed_trade(rt, n, r)
-        n += 1
+    pattern = [1.5] * 20 + [-1.0] * 5 + [1.5] * 5
+    for _ in range(2):
+        for r in pattern:
+            _seed_trade(rt, n, r)
+            n += 1
 
 
 def test_max_drawdown_r_peak_to_trough():
@@ -69,17 +72,11 @@ def test_promotion_eligibility_rejects_empty_desk():
 def test_promote_shadow_to_demo(client, rt):
     _seed_qualifying_evidence(rt)
     rt.config_service.update({"execution_mode": "shadow", "operating_mode": "autonomous"})
-    # debug
-    from backend.ignite.agent.evaluation import promotion_eligibility
-    elig = promotion_eligibility(rt.store.agent_position_outcomes(limit=500), "shadow")
-    print("eligibility", elig)
     resp = client.post("/api/mode/promote", json={"target": "demo", "confirm": True, "account_number": "12345"})
-    if resp.status_code != 200:
-        print("ERROR", resp.text)
     assert resp.status_code == 200
     assert resp.json()["mode"] == "demo"
     assert rt.config().execution_mode == "demo"
-    audit = rt.store.get_audit_log()[-1]
+    audit = rt.store.get_audit_log(limit=1)[0]
     assert audit["action"] == "mode_promoted"
     assert audit["payload"]["from"] == "shadow"
     assert audit["payload"]["to"] == "demo"
@@ -92,7 +89,7 @@ def test_promote_demo_to_live(client, rt):
     assert resp.status_code == 200
     assert resp.json()["mode"] == "live"
     assert rt.config().execution_mode == "live"
-    audit = rt.store.get_audit_log()[-1]
+    audit = rt.store.get_audit_log(limit=1)[0]
     assert audit["action"] == "mode_promoted"
     assert audit["payload"]["from"] == "demo"
     assert audit["payload"]["to"] == "live"
@@ -150,7 +147,7 @@ def test_demote_live_to_shadow(client, rt):
     assert resp.status_code == 200
     assert resp.json()["mode"] == "shadow"
     assert rt.config().execution_mode == "shadow"
-    audit = rt.store.get_audit_log()[-1]
+    audit = rt.store.get_audit_log(limit=1)[0]
     assert audit["action"] == "mode_demoted"
     assert audit["payload"]["from"] == "live"
     assert audit["payload"]["to"] == "shadow"
