@@ -298,6 +298,9 @@ class UnifiedChatAgent:
         """
         name = tool_call.name
         args = tool_call.arguments or {}
+        mode = self.rt.config().operating_mode
+        kill_switch = self.rt.kill_switch()
+        autonomy_level = self.rt.config().autonomy_level
 
         spec = self._session_tools.get(name)
         if spec is None:
@@ -305,14 +308,36 @@ class UnifiedChatAgent:
                 self._registry.get(name) is not None
                 or name in _CUSTOM_TOOL_NAMES
             ):
+                self.rt.store.audit(
+                    "agent",
+                    "tool_denied",
+                    {
+                        "tool": name,
+                        "mode": mode,
+                        "kill_switch": kill_switch,
+                        "autonomy_level": autonomy_level,
+                    },
+                    "denied",
+                )
                 return {"error": "tool not allowed in current mode"}
             return {"error": f"unknown tool: {name}"}
         if not permission_allowed(
             spec.permission,
-            self.rt.config().operating_mode,
-            self.rt.kill_switch(),
-            self.rt.config().autonomy_level,
+            mode,
+            kill_switch,
+            autonomy_level,
         ):
+            self.rt.store.audit(
+                "agent",
+                "tool_denied",
+                {
+                    "tool": name,
+                    "mode": mode,
+                    "kill_switch": kill_switch,
+                    "autonomy_level": autonomy_level,
+                },
+                "denied",
+            )
             return {"error": "tool not allowed in current mode"}
 
         if name == "analyst_assess":
@@ -435,18 +460,50 @@ class UnifiedChatAgent:
         text: str,
         history: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        """Build message history for the model. ``session_id`` is accepted for
-        call-site symmetry; conversation history is passed in explicitly."""
+        """Build message history for the model with sliding window, truncation recovery pointer, and token budget.
+
+        Implements a simple sliding window with a max character budget (≈4 chars/token).
+        If history is truncated, a recovery pointer message is prepended so the model knows
+        context was omitted.
+        """
+        MAX_CHARS = 12000  # approx 3k tokens
         messages: list[dict[str, Any]] = []
         chars = 0
+        truncated = False
+        # iterate newest first, keep up to 12 messages
         for message in reversed(history[-12:]):
             role = message.get("role")
             content = message.get("content", "")
             if role in {"user", "agent"} and content:
                 mapped = "user" if role == "user" else "assistant"
-                if chars + len(content) > 12000:
+                msg_len = len(content)
+                if chars + msg_len > MAX_CHARS:
+                    truncated = True
                     break
                 messages.insert(0, {"role": mapped, "content": content})
-                chars += len(content)
+                chars += msg_len
+        if truncated:
+            # recovery pointer for observability and model awareness
+            messages.insert(0, {
+                "role": "system",
+                "content": "[Context truncated: earlier messages omitted to respect token budget. Use available context only.]"
+            })
         messages.append({"role": "user", "content": text})
+        # observability: log context usage
+        try:
+            self.rt.store.append_agent_event(
+                "chat.context",
+                severity="info",
+                symbol=None,
+                decision_id=None,
+                payload={
+                    "session_id": session_id,
+                    "messages_included": len(messages) - 1,
+                    "char_budget_used": chars,
+                    "char_budget_max": MAX_CHARS,
+                    "truncated": truncated,
+                }
+            )
+        except Exception:
+            pass
         return messages

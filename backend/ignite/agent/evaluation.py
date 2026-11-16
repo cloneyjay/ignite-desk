@@ -32,9 +32,9 @@ from backend.ignite.services.runtime import Runtime
 # the harness fingerprint reset and the audit trail exist to expose it.
 PROMOTION_THRESHOLDS_V1: dict[str, Any] = {
     "version": "promotion.v1",
-    "min_closed_trades": 30,  # enough closed trades for the stats to mean anything
-    "min_sum_r": 0.0,  # strictly positive — must beat the no-trade baseline
-    "min_avg_r": 0.0,  # positive expectancy per trade
+    "min_closed_trades": 60,  # enough closed trades for the stats to mean anything
+    "min_sum_r": 2.0,  # strictly positive — must beat the no-trade baseline
+    "min_avg_r": 0.05,  # positive expectancy per trade
     "min_win_rate": 0.40,
     "max_drawdown_r": 8.0,  # peak-to-trough on cumulative R
 }

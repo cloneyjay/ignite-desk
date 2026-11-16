@@ -292,6 +292,12 @@ class Runtime:
                     report["kronos"]["sum_r"],
                     report["random"]["sum_r"],
                 )
+                self.store.audit(
+                    "agent",
+                    "baseline_report",
+                    {"symbol": symbol, "timeframe": config.timeframe, "report": report},
+                    "ok",
+                )
             except Exception as exc:  # noqa: BLE001 - evaluation must not break the desk
                 logging.getLogger("ignite.runtime").exception(
                     "Baseline report failed for %s: %s", symbol, exc
@@ -448,7 +454,7 @@ class Runtime:
                 raise BrokerError(f"MT5 MCP handshake failed: {exc}") from exc
             self._mcp_ready = True
 
-    def call(self, name: str, arguments: dict[str, Any] | None = None) -> Any:
+    def _call(self, name: str, arguments: dict[str, Any] | None = None) -> Any:
         self._ensure_mcp()
         try:
             return self.mcp.call_tool(name, arguments or {})
@@ -524,7 +530,7 @@ class Runtime:
     # ------------------------------------------------------------------- account
 
     def account(self) -> dict[str, Any]:
-        return self.call("get_trading_account_info").get("account", {})
+        return self._call("get_trading_account_info").get("account", {})
 
     def account_payload(self) -> dict[str, Any]:
         from backend.ignite.services import broker
@@ -639,9 +645,16 @@ class Runtime:
 
     def issue_token(self, draft_id: str, expires_at: str) -> str:
         token = uuid.uuid4().hex + uuid.uuid4().hex
-        expiry = datetime.fromisoformat(expires_at).timestamp()
+        expiry_wall = datetime.fromisoformat(expires_at).timestamp()
+        # Use monotonic clock for expiry to avoid wall-clock drift
+        now_wall = time.time()
+        try:
+            remaining = max(0.0, expiry_wall - now_wall)
+        except Exception:
+            remaining = 0.0
+        expiry_mono = time.monotonic() + remaining
         with self._tokens_lock:
-            self._tokens[token] = (draft_id, expiry)
+            self._tokens[token] = (draft_id, expiry_mono)
             self._sweep_tokens()
         return token
 
@@ -652,12 +665,12 @@ class Runtime:
             entry = self._tokens.pop(token, None)
         if entry is None:
             return False
-        bound_to, expiry = entry
-        return bound_to == draft_id and time.time() <= expiry
+        bound_to, expiry_mono = entry
+        return bound_to == draft_id and time.monotonic() <= expiry_mono
 
     def _sweep_tokens(self) -> None:
-        now = time.time()
-        for token in [t for t, (_, exp) in self._tokens.items() if exp < now]:
+        now_mono = time.monotonic()
+        for token in [t for t, (_, exp) in self._tokens.items() if exp < now_mono]:
             self._tokens.pop(token, None)
 
     # -------------------------------------------------------------------- timestamps

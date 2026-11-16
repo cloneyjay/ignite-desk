@@ -82,8 +82,10 @@ class LLMHarness:
         tool_call_records: list[dict[str, Any]] = []
         start = time.monotonic()
         exhausted = True  # assume budget exhausted until a final response arrives
+        steps_executed = 0
 
         for _step in range(self.max_steps):
+            steps_executed += 1
             remaining = self.deadline_s - (time.monotonic() - start)
             if remaining <= 1.0:
                 break
@@ -98,6 +100,9 @@ class LLMHarness:
             # Model produced final text - no more tool calls needed
             if not result.tool_calls:
                 exhausted = False
+                self._log_harness_metrics(
+                    messages, tool_call_records, steps_executed, exhausted, result
+                )
                 return HarnessResult(
                     text=result.text,
                     tool_calls=tool_call_records,
@@ -154,6 +159,9 @@ class LLMHarness:
             timeout_s=remaining,
         )
 
+        self._log_harness_metrics(
+            messages, tool_call_records, steps_executed, True, final
+        )
         return HarnessResult(
             text=final.text,
             tool_calls=tool_call_records,
@@ -161,3 +169,39 @@ class LLMHarness:
             model=final.model,
             exhausted=True,
         )
+
+    def _log_harness_metrics(
+        self,
+        messages: list[dict[str, Any]],
+        tool_calls: list[dict[str, Any]],
+        steps: int,
+        exhausted: bool,
+        result: LLMResult,
+    ) -> None:
+        """Observability for context budget and token usage."""
+        try:
+            # Rough character count for prompt
+            prompt_chars = sum(len(str(m.get("content", ""))) for m in messages)
+            # Estimate tokens (~4 chars per token)
+            prompt_tokens_est = max(1, prompt_chars // 4)
+            self.rt.store.append_agent_event(
+                "harness.turn.completed",
+                severity="info",
+                symbol=None,
+                decision_id=None,
+                payload={
+                    "provider": result.provider,
+                    "model": result.model,
+                    "steps": steps,
+                    "tool_calls": len(tool_calls),
+                    "exhausted": exhausted,
+                    "prompt_chars": prompt_chars,
+                    "prompt_tokens_est": prompt_tokens_est,
+                    "prompt_tokens_reported": result.prompt_tokens,
+                    "completion_tokens_reported": result.completion_tokens,
+                    "latency_ms": result.latency_ms,
+                }
+            )
+        except Exception:
+            # Logging must never break the harness
+            pass
