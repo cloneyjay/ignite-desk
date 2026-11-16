@@ -1203,6 +1203,47 @@ class Store:
             results.append(item)
         return results
 
+    # ------------------------------------------------------------------ agent auto-memory
+
+    def upsert_memory(self, mem_id: str, key: str, content_json: str, created_at: str) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO agent_memory (id, key, content_json, created_at, access_count)
+            VALUES (?,?,?,?,0)
+            ON CONFLICT(id) DO UPDATE SET
+                key=excluded.key,
+                content_json=excluded.content_json,
+                created_at=excluded.created_at
+            """,
+            (mem_id, key, content_json, created_at),
+        )
+        self._conn.commit()
+
+    def get_memory_by_key(self, key: str) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            "SELECT * FROM agent_memory WHERE key=? ORDER BY created_at DESC LIMIT 1",
+            (key,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def increment_memory_access(self, key: str) -> None:
+        self._conn.execute(
+            "UPDATE agent_memory SET access_count = access_count + 1 WHERE key=?",
+            (key,),
+        )
+        self._conn.commit()
+
+    def list_memory(self, limit: int = 100) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM agent_memory ORDER BY access_count DESC, created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_memory(self, mem_id: str) -> None:
+        self._conn.execute("DELETE FROM agent_memory WHERE id=?", (mem_id,))
+        self._conn.commit()
+
     # ------------------------------------------------------------------ strategies
 
     def insert_strategy(self, strategy: dict[str, Any]) -> str:

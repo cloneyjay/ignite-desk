@@ -12,6 +12,7 @@ from backend.ignite.agent.memory.scratchpad import Scratchpad
 from backend.ignite.agent.memory.episodic import EpisodicMemory
 from backend.ignite.agent.memory.semantic import SemanticMemory
 from backend.ignite.agent.memory.procedural import ProceduralMemory
+from backend.ignite.agent.memory import MemoryStore
 from backend.ignite.agent.tools import ToolRegistry
 from backend.ignite.services.runtime import Runtime
 from backend.ignite.config import Settings, MCPSettings
@@ -132,3 +133,63 @@ def test_procedural_confidence_scoring():
     heuristic = pm.recall("high_spread_reduce")
     assert heuristic["action"] == "reduce_size"
     assert heuristic["confidence"] == 0.9
+
+
+def test_memory_capped_index_eviction():
+    rt = create_test_runtime()
+    # Clean slate
+    rt.store._conn.execute("DELETE FROM agent_memory")
+    rt.store._conn.commit()
+    store = MemoryStore(rt.store, max_entries=200)
+    for i in range(201):
+        pid = store.propose_memory(f"key{i}", {"value": i})
+        store.commit_memory(pid)
+    entries = store.list_memory(limit=500)
+    assert len(entries) == 200
+    keys = {e["key"] for e in entries}
+    # first entry should be evicted (LRU by access_count then created_at)
+    assert "key0" not in keys
+
+
+def test_memory_two_step_save_commit():
+    rt = create_test_runtime()
+    rt.store._conn.execute("DELETE FROM agent_memory")
+    rt.store._conn.commit()
+    store = MemoryStore(rt.store)
+    pid = store.propose_memory("commit_key", {"a": 1})
+    assert store.get_memory("commit_key") is None
+    mem_id = store.commit_memory(pid)
+    assert mem_id is not None
+    content = store.get_memory("commit_key")
+    assert content == {"a": 1}
+
+
+def test_memory_two_step_reject():
+    rt = create_test_runtime()
+    rt.store._conn.execute("DELETE FROM agent_memory")
+    rt.store._conn.commit()
+    store = MemoryStore(rt.store)
+    pid = store.propose_memory("reject_key", {"a": 2})
+    rejected = store.reject_memory(pid)
+    assert rejected is True
+    assert store.get_memory("reject_key") is None
+    # committing after reject should return None
+    assert store.commit_memory(pid) is None
+
+
+def test_memory_get_increments_access_count():
+    rt = create_test_runtime()
+    rt.store._conn.execute("DELETE FROM agent_memory")
+    rt.store._conn.commit()
+    store = MemoryStore(rt.store)
+    pid = store.propose_memory("access_key", {"x": 1})
+    store.commit_memory(pid)
+    # initial access count should be 0
+    row = rt.store.get_memory_by_key("access_key")
+    assert row["access_count"] == 0
+    store.get_memory("access_key")
+    row = rt.store.get_memory_by_key("access_key")
+    assert row["access_count"] == 1
+    store.get_memory("access_key")
+    row = rt.store.get_memory_by_key("access_key")
+    assert row["access_count"] == 2

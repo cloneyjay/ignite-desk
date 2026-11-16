@@ -351,6 +351,18 @@ CREATE TABLE IF NOT EXISTS procedural_memory (
     updated_at  TEXT NOT NULL
 );
 
+-- Agent auto-memory: capped index with two-step save
+CREATE TABLE IF NOT EXISTS agent_memory (
+    id TEXT PRIMARY KEY,
+    key TEXT NOT NULL,
+    content_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    access_count INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_memory_key ON agent_memory (key);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_access ON agent_memory (access_count DESC, created_at DESC);
+
 -- ---------------------------------------------------------------------------
 -- Strategy development: MQL5 Expert Advisors and backtest results
 -- ---------------------------------------------------------------------------

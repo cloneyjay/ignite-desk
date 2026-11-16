@@ -1086,6 +1086,34 @@ class ToolRegistry:
             )
         )
 
+        self._register(
+            ToolSpec(
+                name="memory_save",
+                permission="prepare",
+                description="Propose auto-memory entry for later commit with two-step save",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "key": {"type": "string"},
+                        "content": {"type": "object"},
+                    },
+                    "required": ["key", "content"],
+                    "additionalProperties": False,
+                },
+                output_schema={
+                    "type": "object",
+                    "properties": {
+                        "ok": {"type": "boolean"},
+                        "proposal_id": {"type": "string"},
+                    },
+                    "required": ["ok", "proposal_id"],
+                    "additionalProperties": False,
+                },
+                timeout_s=2.0,
+                handler=self._memory_save,
+            )
+        )
+
         # ============================================================
         # STRATEGY tools (read/prepare — create, compile, backtest EAs)
         # ============================================================
@@ -1623,6 +1651,12 @@ class ToolRegistry:
     async def _procedural_query(self, rt: Runtime, args: dict[str, Any]) -> dict[str, Any]:
         results = rt.store.procedural_query(args.get("limit", 100))
         return {"ok": True, "results": results, "count": len(results)}
+
+    async def _memory_save(self, rt: Runtime, args: dict[str, Any]) -> dict[str, Any]:
+        from backend.ignite.agent.memory import MemoryStore
+        store = MemoryStore(rt.store)
+        proposal_id = store.propose_memory(args["key"], args["content"])
+        return {"ok": True, "proposal_id": proposal_id}
 
     # ============================================================
     # Strategy tools
