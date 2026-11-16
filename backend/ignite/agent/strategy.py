@@ -129,7 +129,7 @@ class StrategyManager:
 
         # Call MT5 MetaEditor MCP tool to compile
         try:
-            result = self.rt.call(
+            result = self.rt._call(
                 "metaeditor.compile",
                 {
                     "file_path": strategy["mql5_code"],  # pass code or path
@@ -219,7 +219,7 @@ class StrategyManager:
             )
 
         try:
-            result = self.rt.call(
+            result = self.rt._call(
                 "terminal.backtest",
                 {
                     "strategy_id": strategy_id,

@@ -93,7 +93,7 @@ class ReadinessService:
 
     def _check_mcp(self) -> CheckResult:
         try:
-            info = self.rt.call("terminal_get_info")
+            info = self.rt._call("terminal_get_info")
             terminal = info.get("terminal") or {}
             if not terminal:
                 return CheckResult(False, "No terminal info", "error")
@@ -103,7 +103,7 @@ class ReadinessService:
 
     def _check_terminal(self) -> CheckResult:
         try:
-            info = self.rt.call("terminal_get_info")
+            info = self.rt._call("terminal_get_info")
             terminal = info.get("terminal") or {}
             connection = (terminal.get("connection") or {}).get("state")
             trade_allowed = terminal.get("trade_allowed", False)

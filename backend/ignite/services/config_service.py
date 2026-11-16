@@ -66,6 +66,17 @@ class ConfigService:
         current = self.get()
         merged = replace(current, **clean)
         check_ceilings(merged.as_dict())
+        # Audit config change
+        self._store.audit(
+            "config",
+            "config.updated",
+            {
+                "patch": clean,
+                "from": current.as_dict(),
+                "to": merged.as_dict(),
+            },
+            "ok",
+        )
         self._write(merged)
         return merged
 

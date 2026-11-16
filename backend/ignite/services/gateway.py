@@ -79,7 +79,7 @@ class AgentExecutionGateway:
             return self._reject(req, "SPEC", f"no symbol spec: {exc}")
 
         try:
-            terminal = rt.call("terminal_get_info").get("terminal") or {}
+            terminal = rt._call("terminal_get_info").get("terminal") or {}
             connection = (terminal.get("connection") or {}).get("state")
             if connection != "synchronized":
                 return self._reject(
@@ -330,9 +330,9 @@ class AgentExecutionGateway:
                 if side == "SELL" and sl > current_sl:
                     return OrderResult(False, "KILL_SWITCH", "modification widens SL (increases risk)")
             if tp is not None and current_tp is not None:
-                if side == "BUY" and tp > current_tp:
+                if side == "BUY" and tp < current_tp:
                     return OrderResult(False, "KILL_SWITCH", "modification widens TP (increases risk)")
-                if side == "SELL" and tp < current_tp:
+                if side == "SELL" and tp > current_tp:
                     return OrderResult(False, "KILL_SWITCH", "modification widens TP (increases risk)")
 
         with rt.execution_lock:
@@ -349,6 +349,9 @@ class AgentExecutionGateway:
     ) -> OrderResult:
         """Scale position in/out. For reduce: close and reopen remainder (MT5 limitation)."""
         rt = self._rt
+        # Kill-switch check: block scale-in, allow scale-out only
+        if rt.kill_switch() and side == "add":
+            return OrderResult(False, "KILL_SWITCH", "scale-in blocked by kill switch")
         try:
             position = next(
                 (p for p in rt.positions() if str(p["ticket"]) == str(ticket)), None

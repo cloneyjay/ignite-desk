@@ -69,7 +69,13 @@ def test_promotion_eligibility_rejects_empty_desk():
 def test_promote_shadow_to_demo(client, rt):
     _seed_qualifying_evidence(rt)
     rt.config_service.update({"execution_mode": "shadow", "operating_mode": "autonomous"})
+    # debug
+    from backend.ignite.agent.evaluation import promotion_eligibility
+    elig = promotion_eligibility(rt.store.agent_position_outcomes(limit=500), "shadow")
+    print("eligibility", elig)
     resp = client.post("/api/mode/promote", json={"target": "demo", "confirm": True, "account_number": "12345"})
+    if resp.status_code != 200:
+        print("ERROR", resp.text)
     assert resp.status_code == 200
     assert resp.json()["mode"] == "demo"
     assert rt.config().execution_mode == "demo"

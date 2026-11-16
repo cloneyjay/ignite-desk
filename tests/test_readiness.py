@@ -26,7 +26,7 @@ def test_readiness_kronos_down(rt):
 
 def test_readiness_mcp_unreachable(rt):
     """Readiness fails when MCP is unreachable."""
-    with patch.object(rt, 'call', side_effect=Exception("MCP unreachable")):
+    with patch.object(rt, '_call', side_effect=Exception("MCP unreachable")):
         report = ReadinessService(rt).check()
         assert report.ready is False
         assert not report.checks["mcp"].ok

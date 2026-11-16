@@ -159,6 +159,7 @@ class Orchestrator:
                     "tool not allowed in current mode" if registered else f"unknown tool: {name}"
                 )
             }
+            self.rt.store.audit("agent", "tool.denied", {"tool": name, "decision_id": decision_id, "registered": registered}, "denied")
             self._record_tool_event(
                 decision_id, name, args, result, status="error"
             )

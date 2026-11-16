@@ -28,7 +28,7 @@ def health(rt: Runtime = Depends(get_rt)) -> dict[str, Any]:
     terminal: dict[str, Any] = {}
     tools = 0
     try:
-        info = rt.call("terminal_get_info")
+        info = rt._call("terminal_get_info")
         terminal = info.get("terminal") or {}
         tools = len(rt.mcp.list_tools())
     except BrokerError as exc:
