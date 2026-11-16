@@ -235,17 +235,23 @@ class Orchestrator:
         if not isinstance(decision, DecisionError):
             return decision
 
-        # Invalid decision: ask the model to retry once.
-        corrected_text = (
-            '{"symbol": "%s", "timeframe": "%s", "action": "NO_TRADE", '
-            '"conviction": 0.0, "thesis": "decision parse failed: %s", '
-            '"evidence": [], "failed_conditions": ["invalid_decision"], '
-            '"entry": {"type": "market", "price": 0.0}, '
-            '"risk": {"lots": 0.0, "sl": 0.0, "tp": 0.0}, '
-            '"expected_rr": 0.0, "invalidate_if": [], '
-            '"links": {"analysis_id": null, "draft_id": null, "decision_id": "%s"}}'
-            % (symbol, timeframe, decision, decision_id)
-        )
+        # Invalid decision: build safe fallback via dataclass to avoid string formatting issues.
+        import json
+        fallback_dict = {
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "action": "NO_TRADE",
+            "conviction": 0.0,
+            "thesis": f"decision parse failed: {decision}",
+            "evidence": [],
+            "failed_conditions": ["invalid_decision"],
+            "entry": {"type": "market", "price": 0.0},
+            "risk": {"lots": 0.0, "sl": 0.0, "tp": 0.0},
+            "expected_rr": 0.0,
+            "invalidate_if": [],
+            "links": {"analysis_id": None, "draft_id": None, "decision_id": decision_id},
+        }
+        corrected_text = json.dumps(fallback_dict)
         decision = parse_decision(corrected_text)
         if isinstance(decision, DecisionError):
             return self._budget_exhausted(

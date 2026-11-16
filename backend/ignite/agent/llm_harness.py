@@ -121,7 +121,10 @@ class LLMHarness:
                         # Budget exhausted: let the model produce a final answer
                         # from what it has already gathered.
                         break
-                tool_result = self.execute(tc.name, tc.arguments or {})
+                try:
+                    tool_result = self.execute(tc.name, tc.arguments or {})
+                except Exception as exc:
+                    tool_result = {"error": f"tool_execution_failed: {exc}"}
                 tool_call_records.append(
                     {
                         "name": tc.name,

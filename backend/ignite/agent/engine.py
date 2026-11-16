@@ -74,7 +74,7 @@ def _risk_mismatch(draft: dict[str, Any], risk: Any) -> str | None:
         if draft_value is None:
             return f"decision_draft_mismatch: draft {field} missing"
         if float(draft_value) != float(value) and not math.isclose(
-            float(draft_value), float(value), rel_tol=1e-9, abs_tol=1e-9
+            float(draft_value), float(value), rel_tol=1e-6, abs_tol=1e-6
         ):
             return (
                 f"decision_draft_mismatch: decision risk {field}={value} "
@@ -263,6 +263,22 @@ class AgentEngine:
         draft = self.rt.store.get_draft(draft_id)
         if draft is None:
             return f"draft_not_found: {draft_id}"
+        # Draft expiry check
+        expires_at = draft.get("expires_at")
+        if expires_at:
+            from backend.ignite.store.db import utc_now
+            from datetime import datetime, timezone
+            try:
+                exp = datetime.fromisoformat(expires_at)
+                now = datetime.fromisoformat(utc_now())
+                if exp.tzinfo is None:
+                    exp = exp.replace(tzinfo=timezone.utc)
+                if now.tzinfo is None:
+                    now = now.replace(tzinfo=timezone.utc)
+                if now > exp:
+                    return f"draft_expired: {draft_id}"
+            except Exception:
+                return "draft_expiry_check_failed"
         expected = _SIDE_FOR_ACTION[decision.action]
         if str(draft.get("side", "")).lower() != expected:
             return (
@@ -307,7 +323,11 @@ class AgentEngine:
             return GuardResult(ok=False, reason="Kill switch enabled")
 
         config = self.rt.config()
-        pnl = self.rt.ledger.daily()
+        try:
+            pnl = self.rt.ledger.daily()
+        except Exception as exc:
+            self.rt.store.audit("agent.cycle.blocked", {"reason": "ledger_error", "error": str(exc)})
+            return GuardResult(ok=False, reason="ledger_unavailable")
         if not pnl.available:
             return GuardResult(ok=False, reason="daily_pnl_unavailable")
         if pnl.blocked:
