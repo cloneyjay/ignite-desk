@@ -28,6 +28,43 @@ def test_runtime_stop_is_idempotent(runtime):
     runtime.stop()  # Should not raise
 
 
+def test_runtime_schedules_daily_evaluation(runtime):
+    """The desk trades every day, so evaluation runs daily after session close."""
+    runtime.start()
+    job_ids = {job.id for job in runtime.scheduler.get_jobs()}
+    runtime.stop()
+    assert "daily_evaluation" in job_ids
+
+
+def test_evaluation_job_runs_report_and_survives_failure(runtime, monkeypatch):
+    """The daily job journals a report per symbol; failures are audited, not raised."""
+    import backend.ignite.agent.baselines as baselines_mod
+
+    runtime.seed_symbols()
+    calls: list[str] = []
+
+    def fake_report(rt, symbol, **kwargs):
+        calls.append(symbol)
+        if symbol == "BOOM":
+            raise RuntimeError("mcp down")
+        return {
+            "agent": {"sum_r": 0.5}, "kronos": {"sum_r": 1.0},
+            "random": {"sum_r": -0.5}, "symbol": symbol,
+        }
+
+    monkeypatch.setattr(baselines_mod, "baseline_report", fake_report)
+    monkeypatch.setattr(
+        "backend.ignite.store.db.Store.list_symbols",
+        lambda self: [{"symbol": "XAUUSD"}, {"symbol": "BOOM"}],
+    )
+
+    runtime._evaluation_job()  # must not raise
+
+    assert calls == ["XAUUSD", "BOOM"]
+    audits = runtime.store.get_audit_log(limit=10)
+    assert any(a["action"] == "baseline_report_failed" and "mcp down" in a["result"] for a in audits)
+
+
 def test_runtime_cycle_lock_prevents_overlap(runtime):
     """Only one cycle runs at a time (single-flight lock)."""
     runtime.start()

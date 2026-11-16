@@ -11,12 +11,7 @@ import json
 
 import pandas as pd
 
-from backend.ignite.agent.baselines import (
-    baseline_report,
-    kronos_baseline,
-    random_baseline,
-    simulate_trade,
-)
+from backend.ignite.agent.baselines import baseline_report, kronos_baseline, random_baseline, simulate_trade
 from backend.ignite.analysis.risk import RiskConfig
 from backend.ignite.store.db import utc_now
 

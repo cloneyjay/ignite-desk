@@ -39,6 +39,19 @@ def test_agent_status_endpoint(env):
     assert "positions_open" in data
 
 
+def test_agent_baseline_endpoint(env):
+    """Goal 5 daily baseline comparison is available to the dashboard."""
+    client, rt = env
+    rt.seed_symbols()
+    resp = client.get("/api/agent/evaluation/baseline?lookback_days=2")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["symbol"] == "XAUUSD"
+    assert data["no_trade"]["sum_r"] == 0.0
+    assert "sum_r" in data["agent"] and "sum_r" in data["kronos"] and "sum_r" in data["random"]
+    assert "Mechanics evidence only" in data["disclaimer"]
+
+
 def test_agent_toggle_endpoint(env):
     client, rt = env
     # Enable

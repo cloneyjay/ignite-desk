@@ -25,6 +25,7 @@ only"):
 
 from __future__ import annotations
 
+import json
 import random
 from typing import Any
 
@@ -34,6 +35,7 @@ from backend.ignite.agent.evaluation import summarize_outcomes
 from backend.ignite.analysis.risk import RiskConfig
 from backend.ignite.market.bars import fetch_bars
 from backend.ignite.services.runtime import Runtime
+from backend.ignite.store.db import utc_now
 
 BARS_PER_DAY_M15 = 96
 DEFAULT_MAX_HOLD_BARS = 96  # one trading day on M15
@@ -297,4 +299,19 @@ def baseline_report(
         symbol=symbol,
         payload={k: v for k, v in report.items() if k != "window"},
     )
+
+    # Cache a compact summary for the LLM's context pack (Goal 5 criterion 5):
+    # the heavy simulation runs daily / on demand, the cycle reads a setting.
+    summary_key = "agent_baseline_summary"
+    try:
+        cached = json.loads(rt.store.setting(summary_key) or "{}")
+    except Exception:  # noqa: BLE001
+        cached = {}
+    cached[symbol] = {
+        "created_at": utc_now(),
+        "agent_sum_r": report["agent"]["sum_r"],
+        "kronos_sum_r": report["kronos"]["sum_r"],
+        "random_sum_r": report["random"]["sum_r"],
+    }
+    rt.store.set_setting(summary_key, json.dumps(cached))
     return report

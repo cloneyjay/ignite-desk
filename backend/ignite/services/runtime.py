@@ -193,6 +193,16 @@ class Runtime:
             misfire_grace_time=120,
         )
 
+        # Daily evaluation job (Goal 5): baseline comparison after session close
+        self.scheduler.add_job(
+            self._evaluation_job,
+            CronTrigger(hour=(config.session_end_hour + 1) % 24, minute=30, timezone="UTC"),
+            id="daily_evaluation",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=600,
+        )
+
         self.scheduler.start()
 
     def stop(self) -> None:
@@ -257,6 +267,41 @@ class Runtime:
                 self.store.expire_stale_drafts(utc_now())
         except Exception as exc:  # noqa: BLE001
             logging.getLogger("ignite.runtime").exception("Draft expiry failed: %s", exc)
+
+    def _evaluation_job(self) -> None:
+        """Goal 5 daily evaluation: baseline comparison for every watched symbol.
+
+        Runs each day after session close so the autonomy ladder's evidence
+        trail grows daily (the desk trades every day; evaluation is not a
+        one-off tool run). Failures are audited, never raised into the
+        scheduler.
+        """
+        from backend.ignite.agent.baselines import baseline_report
+
+        if self._shutdown.is_set():
+            return
+        config = self.config()
+        for row in self.store.list_symbols():
+            symbol = row["symbol"]
+            try:
+                report = baseline_report(self, symbol, timeframe=config.timeframe)
+                logging.getLogger("ignite.runtime").info(
+                    "Baseline report %s: agent %+.2fR, kronos %+.2fR, random %+.2fR",
+                    symbol,
+                    report["agent"]["sum_r"],
+                    report["kronos"]["sum_r"],
+                    report["random"]["sum_r"],
+                )
+            except Exception as exc:  # noqa: BLE001 - evaluation must not break the desk
+                logging.getLogger("ignite.runtime").exception(
+                    "Baseline report failed for %s: %s", symbol, exc
+                )
+                self.store.audit(
+                    "agent",
+                    "baseline_report_failed",
+                    {"symbol": symbol},
+                    str(exc),
+                )
 
     # ------------------------------------------------------------------- mode promotion
 

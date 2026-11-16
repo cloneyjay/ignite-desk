@@ -13,7 +13,7 @@ import uuid
 from dataclasses import replace
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from backend.ignite.agent.chat_agent import ChatResponse, UnifiedChatAgent
@@ -1207,6 +1207,25 @@ def agent_strategy_demote(
 @router.get("/agent/config")
 def agent_config_get(rt: Runtime = Depends(get_rt)) -> dict[str, Any]:
     return rt.config().__dict__
+
+
+@router.get("/agent/evaluation/baseline")
+def agent_baseline_report(
+    rt: Runtime = Depends(get_rt),
+    symbol: str = Query("XAUUSD"),
+    lookback_days: int = Query(30, ge=1, le=180),
+) -> dict[str, Any]:
+    """Goal 5 daily baseline comparison: agent vs no-trade/Kronos/random.
+
+    Runs the conservative replay now (the scheduler also runs it daily after
+    session close and caches a compact summary for the LLM's context pack).
+    """
+    from backend.ignite.agent.baselines import baseline_report
+
+    try:
+        return baseline_report(rt, symbol, lookback_days=lookback_days)
+    except Exception as exc:  # noqa: BLE001 - surfaced as 502 to the dashboard
+        raise HTTPException(status_code=502, detail=f"baseline report failed: {exc}") from exc
 
 
 @router.put("/agent/config")

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 
+from backend.ignite.agent.baselines import baseline_report
 from backend.ignite.agent.evaluation import (
     compact_feedback,
     harness_fingerprint,
@@ -201,3 +202,30 @@ def test_compact_feedback_mentions_stats_and_trades(rt):
 
 def test_compact_feedback_empty_desk(rt):
     assert "no entry decisions" in compact_feedback(rt)
+
+
+def test_compact_feedback_includes_cached_baseline(rt):
+    """The daily evaluation job's cached summary reaches the LLM's context pack."""
+    rt.store.set_setting(
+        "agent_baseline_summary",
+        json.dumps({
+            "XAUUSD": {
+                "created_at": "2026-11-16T22:30:00+00:00",
+                "agent_sum_r": 0.4,
+                "kronos_sum_r": 1.2,
+                "random_sum_r": -0.8,
+            }
+        }),
+    )
+    text = compact_feedback(rt)
+    assert "Baseline (XAUUSD" in text
+    assert "you +0.40R" in text
+    assert "follow-Kronos +1.20R" in text
+    assert "random -0.80R" in text
+
+
+def test_baseline_report_caches_summary_for_feedback(rt):
+    report = baseline_report(rt, "XAUUSD", lookback_days=2)
+    cached = json.loads(rt.store.setting("agent_baseline_summary") or "{}")
+    assert "XAUUSD" in cached
+    assert cached["XAUUSD"]["agent_sum_r"] == report["agent"]["sum_r"]

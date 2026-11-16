@@ -9,16 +9,16 @@ produces:
   operator and the autonomy ladder have evidence.
 - ``compact_feedback`` — a short string for the LLM's context pack
   (recent decisions with outcomes, per the PRD: "compact feedback, not
-  raw history").
+  raw history"), plus the cached daily baseline comparison.
 
-Baselines (no-trade / follow-Kronos / random with the same risk rules) and
-auto-promotion/demotion thresholds are later increments of Goal 5; this file
-deliberately does not claim or gate on them yet.
+Promotion thresholds are a later increment of Goal 5; this file
+deliberately does not gate promotion on any number yet.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 from typing import Any
 
 from backend.ignite.services.runtime import Runtime
@@ -93,22 +93,23 @@ def compact_feedback(rt: Runtime, limit: int = 30) -> str:
     try:
         rows = rt.store.agent_position_outcomes(limit=limit)
     except Exception:  # noqa: BLE001 - feedback is best effort, never blocks
-        return "Decision outcome stats: unavailable."
+        rows = []
+    stats = summarize_outcomes(rows) if rows else None
+    lines: list[str] = []
     if not rows:
-        return "Decision outcome stats: no entry decisions journaled yet."
-
-    stats = summarize_outcomes(rows)
-    lines = [
-        "Decision outcome stats (measured, last {closed} closed of {executed} executed):"
-        .format(closed=stats["closed"], executed=stats["executed"]),
-        (
-            f"- win rate {stats['win_rate']:.0%}, "
-            f"sum R {_fmt(stats['sum_r'])}, avg R {_fmt(stats['avg_r'])}"
-            if stats["win_rate"] is not None
-            else "- no closed trades yet"
-        ),
-        f"- realised P&L (reported): {stats['total_realised_usd']:+.2f} USD",
-    ]
+        lines.append("Decision outcome stats: no entry decisions journaled yet.")
+    else:
+        lines.extend([
+            "Decision outcome stats (measured, last {closed} closed of {executed} executed):"
+            .format(closed=stats["closed"], executed=stats["executed"]),
+            (
+                f"- win rate {stats['win_rate']:.0%}, "
+                f"sum R {_fmt(stats['sum_r'])}, avg R {_fmt(stats['avg_r'])}"
+                if stats["win_rate"] is not None
+                else "- no closed trades yet"
+            ),
+            f"- realised P&L (reported): {stats['total_realised_usd']:+.2f} USD",
+        ])
 
     closed_rows = [
         r for r in rows if r.get("executed") and r.get("r_multiple") is not None
@@ -122,4 +123,25 @@ def compact_feedback(rt: Runtime, limit: int = 30) -> str:
                 f"{r['symbol']} R={_fmt(float(r['r_multiple']))} "
                 f"({r.get('close_reason') or 'closed'}) :: {thesis}"
             )
+
+    # Daily baseline comparison (Goal 5), computed by the scheduled evaluation
+    # job — read from cache so no simulation happens per cycle.
+    try:
+        cached = json.loads(rt.store.setting("agent_baseline_summary") or "{}")
+    except Exception:  # noqa: BLE001
+        cached = {}
+    for symbol, s in cached.items():
+        lines.append(
+            f"- Baseline ({symbol}, {str(s.get('created_at'))[:10]}, mechanics only): "
+            f"you {_fmt(_num(s.get('agent_sum_r')))}R vs "
+            f"follow-Kronos {_fmt(_num(s.get('kronos_sum_r')))}R vs "
+            f"random {_fmt(_num(s.get('random_sum_r')))}R"
+        )
     return "\n".join(lines)
+
+
+def _num(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
