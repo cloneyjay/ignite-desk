@@ -251,10 +251,10 @@ class Runtime:
             self._cycle_lock.release()
 
     def _expire_stale_drafts(self) -> None:
-        """Expire drafts older than the configured TTL."""
+        """Expire drafts past their expires_at (TTL is applied at draft creation)."""
         try:
             if not self._shutdown.is_set():
-                self.store.expire_stale_drafts(self.settings.draft_ttl_s)
+                self.store.expire_stale_drafts(utc_now())
         except Exception as exc:  # noqa: BLE001
             logging.getLogger("ignite.runtime").exception("Draft expiry failed: %s", exc)
 
@@ -532,10 +532,6 @@ class Runtime:
         """Return a copy of all jobs for health monitoring."""
         with self._jobs_lock:
             return list(self.jobs.values())
-
-    def expire_drafts(self) -> int:
-        """Expire stale drafts. Called by scheduler."""
-        return self.store.expire_stale_drafts(utc_now())
 
     # --------------------------------------------------------------- confirm token
 

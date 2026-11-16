@@ -15,6 +15,7 @@ consecutive-loss streak) which the LLM cannot influence.
 from __future__ import annotations
 
 import json
+import math
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -59,6 +60,26 @@ class GuardResult:
 
 
 _SIDE_FOR_ACTION = {"LONG": "buy", "SHORT": "sell"}
+
+
+def _risk_mismatch(draft: dict[str, Any], risk: Any) -> str | None:
+    """Compare draft lots/SL/TP against the decision's stated risk.
+
+    Fail closed: a missing draft number or a difference beyond float noise
+    is a mismatch — the draft that gets executed must be the decision's risk.
+    """
+    for field, value in (("lots", risk.lots), ("sl", risk.sl), ("tp", risk.tp)):
+        draft_value = draft.get(field)
+        if draft_value is None:
+            return f"decision_draft_mismatch: draft {field} missing"
+        if float(draft_value) != float(value) and not math.isclose(
+            float(draft_value), float(value), rel_tol=1e-9, abs_tol=1e-9
+        ):
+            return (
+                f"decision_draft_mismatch: decision risk {field}={value} "
+                f"but draft {field}={draft_value}"
+            )
+    return None
 
 
 class AgentEngine:
@@ -213,6 +234,8 @@ class AgentEngine:
     def _validate_entry(self, decision: Decision) -> str | None:
         """The LLM's stated decision must match the draft it wants executed.
 
+        Side, symbol, lots, SL and TP are all checked: the numbers that reach
+        the broker must be the numbers the decision states (PRD Invariant #3/#6).
         Returns an error string (fail closed) or None when consistent.
         """
         draft_id = decision.links.draft_id
@@ -229,6 +252,9 @@ class AgentEngine:
             )
         if draft.get("symbol") not in (None, decision.symbol):
             return "decision_draft_mismatch: symbol differs"
+        risk_error = _risk_mismatch(draft, decision.risk)
+        if risk_error is not None:
+            return risk_error
         return None
 
     def _signal_numbers(self, analysis_id: str | None) -> tuple[float, float]:

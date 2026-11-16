@@ -37,3 +37,37 @@ def test_runtime_cycle_lock_prevents_overlap(runtime):
     assert acquired is True
     runtime._cycle_lock.release()
     runtime.stop()
+
+
+def test_expire_stale_drafts_job_expires_pending(runtime):
+    """The scheduled expiry job transitions stale drafts to expired (PRD Goal 4).
+
+    Regression: the job passed an integer TTL where an ISO timestamp is required,
+    so the SQL comparison `expires_at <= ?` was always false and nothing expired.
+    """
+    from backend.ignite.store.db import utc_now
+
+    store = runtime.store
+    store._conn.execute(
+        """INSERT INTO analyses (id, created_at, symbol, timeframe, last_bar_time,
+        lookback, horizon, samples, model_id, infer_s, atr, p_up, edge, edge_atr,
+        dispersion, signal, signal_version, risk_version, features_json, reasons_json)
+        VALUES ('a','2026-01-01T00:00:00+00:00','XAUUSD','M15','t',1,1,1,'m',0.1,
+        2.5,0.6,1.0,0.5,0.1,'LONG','v1','v1','{}','[]')"""
+    )
+    store.insert_draft({
+        "id": "d1", "analysis_id": "a", "created_at": "2026-01-01T00:00:00+00:00",
+        "expires_at": "2026-01-01T00:00:01+00:00", "state": "draft",
+        "side": "long", "lots": 0.01, "reference_price": 3930.0,
+        "sl": 3920.0, "tp": 3950.0, "risk_usd": 10.0, "risk_pct": 0.01,
+        "rr": 2.0, "margin": None, "worst_case_usd": None,
+        "blocked": 0, "block_reason": None, "idempotency_key": "k1",
+    })
+    store._conn.commit()
+    assert len(store.pending_drafts()) == 1
+
+    runtime._expire_stale_drafts()
+
+    assert store.pending_drafts() == []
+    assert store.get_draft("d1")["state"] == "expired"
+    assert store.expire_stale_drafts(utc_now()) == 0  # idempotent

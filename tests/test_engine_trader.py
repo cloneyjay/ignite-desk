@@ -57,5 +57,31 @@ def test_entry_side_must_match_draft():
 
 
 def test_entry_matching_draft_ok():
-    assert _engine({"side": "buy"})._validate_entry(_decision("LONG", "x")) is None
-    assert _engine({"side": "sell"})._validate_entry(_decision("SHORT", "x")) is None
+    draft = {"side": "buy", "lots": 0.01, "sl": 1.0, "tp": 2.0}
+    assert _engine(draft)._validate_entry(_decision("LONG", "x")) is None
+    sell_draft = {"side": "sell", "lots": 0.01, "sl": 1.0, "tp": 2.0}
+    assert _engine(sell_draft)._validate_entry(_decision("SHORT", "x")) is None
+
+
+def test_entry_lots_must_match_draft():
+    draft = {"side": "buy", "lots": 0.5, "sl": 1.0, "tp": 2.0}
+    err = _engine(draft)._validate_entry(_decision("LONG", "x"))
+    assert err and "lots" in err and "mismatch" in err
+
+
+def test_entry_sl_must_match_draft():
+    draft = {"side": "buy", "lots": 0.01, "sl": 9.0, "tp": 2.0}
+    err = _engine(draft)._validate_entry(_decision("LONG", "x"))
+    assert err and "sl" in err and "mismatch" in err
+
+
+def test_entry_tp_must_match_draft():
+    draft = {"side": "buy", "lots": 0.01, "sl": 1.0, "tp": 9.0}
+    err = _engine(draft)._validate_entry(_decision("LONG", "x"))
+    assert err and "tp" in err and "mismatch" in err
+
+
+def test_entry_missing_draft_risk_fails_closed():
+    """A draft without risk numbers is a mismatch, never a pass (fail closed)."""
+    err = _engine({"side": "buy"})._validate_entry(_decision("LONG", "x"))
+    assert err and "mismatch" in err
