@@ -873,8 +873,8 @@ class Store:
                 managed_by_agent, trail_sl, scale_in_count, scale_out_count,
                 max_favourable_atr, max_adverse_atr, last_managed_at,
                 closed_at, close_reason, realised_pnl, r_multiple,
-                last_synced_at, broker_snapshot_json, status
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                last_synced_at, broker_snapshot_json, status, decision_id
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(ticket) DO UPDATE SET
                 symbol=excluded.symbol,
                 side=excluded.side,
@@ -920,6 +920,7 @@ class Store:
                 pos.get("last_synced_at"),
                 pos.get("broker_snapshot_json"),
                 pos.get("status", "open"),
+                pos.get("decision_id"),
             ),
         )
         self._conn.commit()
@@ -936,6 +937,42 @@ class Store:
     def agent_position(self, ticket: str) -> dict[str, Any] | None:
         row = self._conn.execute("SELECT * FROM agent_positions WHERE ticket=?", (ticket,)).fetchone()
         return dict(row) if row else None
+
+    def decision_id_for_ticket(self, ticket: str) -> str | None:
+        """Goal 5 linkage: which decision produced this broker position ticket.
+
+        The orders table records ``id`` = decision_id and ``position_id`` =
+        the broker ticket returned on fill (gateway.place).
+        """
+        row = self._conn.execute(
+            "SELECT id FROM orders WHERE position_id=? ORDER BY created_at DESC LIMIT 1",
+            (str(ticket),),
+        ).fetchone()
+        return row["id"] if row else None
+
+    def agent_position_outcomes(self, limit: int = 200) -> list[dict[str, Any]]:
+        """Goal 5: entry decisions joined to their trade outcomes.
+
+        One row per LONG/SHORT decision; outcome columns are NULL when the
+        decision never became a position or has not closed yet. NO_TRADE
+        decisions are excluded (hypothetical outcomes come later).
+        """
+        rows = self._conn.execute(
+            """
+            SELECT d.id AS decision_id, d.created_at, d.symbol, d.timeframe,
+                   d.signal_side, d.decision, d.confidence, d.p_up, d.edge_atr,
+                   d.reasoning, d.executed, d.execution_error, d.attribution_json,
+                   p.ticket, p.status, p.realised_pnl, p.r_multiple,
+                   p.mfe, p.mae, p.close_reason, p.closed_at
+            FROM agent_decisions d
+            LEFT JOIN agent_positions p ON p.decision_id = d.id
+            WHERE d.decision IN ('LONG','SHORT')
+            ORDER BY d.created_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [self._agent_decision_row(r) for r in rows]
 
     def close_agent_position(self, ticket: str, close_reason: str, realised_pnl: float, r_multiple: float) -> None:
         self._conn.execute(

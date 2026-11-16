@@ -22,6 +22,7 @@ from backend.ignite.agent.decision import (
     Risk,
     parse_decision,
 )
+from backend.ignite.agent.evaluation import compact_feedback
 from backend.ignite.agent.llm_harness import HarnessResult, LLMHarness
 from backend.ignite.services.runtime import Runtime
 
@@ -295,7 +296,8 @@ class Orchestrator:
             "content": (
                 f"Analyze {symbol} on {timeframe} and produce a trading decision.\n"
                 f"decision_id: {decision_id}\n\n"
-                f"{self._recent_journal(symbol, timeframe)}"
+                f"{self._recent_journal(symbol, timeframe)}\n\n"
+                f"{compact_feedback(self.rt)}"
             ),
         }
         return system_prompt, user_message

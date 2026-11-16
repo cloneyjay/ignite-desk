@@ -79,10 +79,11 @@ class PositionManager:
         for position in live:
             if not str(position.get("comment") or "").startswith("ignite "):
                 continue
-            existing = self.rt.store.agent_position(str(position["ticket"])) or {}
+            ticket = str(position["ticket"])
+            existing = self.rt.store.agent_position(ticket) or {}
             self.rt.store.upsert_agent_position(
                 {
-                    "ticket": str(position["ticket"]),
+                    "ticket": ticket,
                     "symbol": position["symbol"],
                     "side": position["side"],
                     "entry_price": position["price_open"],
@@ -97,6 +98,11 @@ class PositionManager:
                     "max_favourable_atr": existing.get("max_favourable_atr"),
                     "max_adverse_atr": existing.get("max_adverse_atr"),
                     "last_managed_at": datetime.now(timezone.utc).isoformat(),
+                    # Goal 5 linkage: bind the position to the decision that
+                    # created it, resolved once from the orders table on first
+                    # sight. First write wins; later syncs preserve it.
+                    "decision_id": existing.get("decision_id")
+                    or self.rt.store.decision_id_for_ticket(ticket),
                 }
             )
         for position in self.rt.store.agent_positions():
