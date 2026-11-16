@@ -102,7 +102,7 @@ class MemoryStore:
             DELETE FROM agent_memory
             WHERE id IN (
                 SELECT id FROM agent_memory
-                ORDER BY access_count ASC, created_at ASC
+                ORDER BY access_count ASC, created_at ASC, id ASC
                 LIMIT ?
             )
             """,

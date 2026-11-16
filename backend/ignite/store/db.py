@@ -14,7 +14,7 @@ SCHEMA = Path(__file__).with_name("schema.sql")
 
 
 def utc_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 class Store:
