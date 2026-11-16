@@ -38,15 +38,17 @@ export default function EvaluationPanel() {
   const agentSumR = baseline?.agent?.sum_r ?? 0;
   const kronosSumR = baseline?.kronos?.sum_r ?? 0;
   const randomSumR = baseline?.random?.sum_r ?? 0;
+  const noTradeSumR = baseline?.no_trade?.sum_r ?? 0;
 
   const agentTone = (agentSumR > kronosSumR && agentSumR > randomSumR) ? "long" : agentSumR < 0 ? "short" : "neutral";
 
   return (
     <Panel title="Evaluation" subtitle="Goal 5 baseline & promotion">
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-4 gap-2">
         <MetricTile label="Agent sum R" value={agentSumR.toFixed(2)} tone={agentTone} />
         <MetricTile label="Kronos sum R" value={kronosSumR.toFixed(2)} tone="neutral" />
         <MetricTile label="Random sum R" value={randomSumR.toFixed(2)} tone="neutral" />
+        <MetricTile label="No-trade sum R" value={noTradeSumR.toFixed(2)} tone="neutral" />
       </div>
 
       {baseline?.assumptions && (
