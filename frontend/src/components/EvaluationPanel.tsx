@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { Panel, Badge } from "./ui";
+import { dateTime } from "../lib/format";
 
 function MetricTile({
   label,
@@ -35,6 +36,24 @@ export default function EvaluationPanel() {
     staleTime: 5 * 60 * 1000,
   });
 
+  const { data: harness } = useQuery({
+    queryKey: ["agentHarness"],
+    queryFn: () => api.agentHarness(),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const { data: demotions } = useQuery({
+    queryKey: ["agentAutoDemotions"],
+    queryFn: () => api.agentAutoDemotions(10),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const { data: drafts } = useQuery({
+    queryKey: ["activeDrafts"],
+    queryFn: () => api.activeDrafts(20),
+    staleTime: 30 * 1000,
+  });
+
   const agentSumR = baseline?.agent?.sum_r ?? 0;
   const kronosSumR = baseline?.kronos?.sum_r ?? 0;
   const randomSumR = baseline?.random?.sum_r ?? 0;
@@ -44,6 +63,16 @@ export default function EvaluationPanel() {
 
   return (
     <Panel title="Evaluation" subtitle="Goal 5 baseline & promotion">
+      {harness && (
+        <div className="mb-3 flex items-center justify-between text-[10px]">
+          <div className="text-fog">Harness</div>
+          <div className="flex items-center gap-2">
+            <Badge tone="neutral">{harness.fingerprint ?? "—"}</Badge>
+            <span className="text-fog">changed {harness.last_change ? dateTime(harness.last_change) : "never"}</span>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-4 gap-2">
         <MetricTile label="Agent sum R" value={agentSumR.toFixed(2)} tone={agentTone} />
         <MetricTile label="Kronos sum R" value={kronosSumR.toFixed(2)} tone="neutral" />
@@ -95,6 +124,33 @@ export default function EvaluationPanel() {
           </>
         )}
       </div>
+
+      {drafts && drafts.drafts?.length > 0 && (
+        <div className="mt-4 border-t border-line/40 pt-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-text-muted mb-2">Active drafts</div>
+          <div className="space-y-1 max-h-32 overflow-auto">
+            {drafts.drafts.map((d) => (
+              <div key={d.id} className="flex justify-between text-[10px] font-mono text-fog">
+                <span>{d.symbol} {d.side}</span>
+                <span>expires {d.expires_at ? dateTime(d.expires_at) : "—"}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {demotions && demotions.demotions?.length > 0 && (
+        <div className="mt-4 border-t border-line/40 pt-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-text-muted mb-2">Recent auto-demotions</div>
+          <div className="space-y-1">
+            {demotions.demotions.slice(0, 5).map((d, i) => (
+              <div key={i} className="text-[10px] text-fog">
+                <span className="text-paper">{dateTime(d.ts)}</span> {d.from}→{d.to}: {d.reason}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </Panel>
   );
 }

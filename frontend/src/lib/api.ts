@@ -267,4 +267,10 @@ export const api = {
     request<BaselineReport>(`/agent/evaluation/baseline${query({ symbol, lookback_days: lookbackDays })}`),
   agentPromotionEligibility: () =>
     request<PromotionEligibility>("/agent/evaluation/promotion"),
+  agentHarness: () =>
+    request<{ fingerprint: string | null; last_change: string | null }>("/agent/harness"),
+  agentAutoDemotions: (limit = 20) =>
+    request<{ demotions: { ts: string; from: string; to: string; reason: string }[]; count: number }>(`/agent/auto_demotions${query({ limit })}`),
+  activeDrafts: (limit = 50) =>
+    request<{ drafts: { id: string; symbol: string; side: string; state: string; created_at: string; expires_at: string }[]; count: number }>(`/drafts/active${query({ limit })}`),
 };

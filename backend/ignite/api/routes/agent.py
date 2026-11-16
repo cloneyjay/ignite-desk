@@ -1248,6 +1248,64 @@ def agent_promotion_eligibility(rt: Runtime = Depends(get_rt)) -> dict[str, Any]
     )
 
 
+@router.get("/agent/harness")
+def agent_harness_info(rt: Runtime = Depends(get_rt)) -> dict[str, Any]:
+    fingerprint = rt.store.setting("agent_eval_fingerprint")
+    # Find last harness change via audit log
+    last_change = None
+    try:
+        audits = rt.store.get_audit_log(limit=500)
+        for entry in audits:
+            if entry.get("action") != "mode_auto_demoted":
+                continue
+            payload = entry.get("payload") or {}
+            reason = payload.get("reason") or ""
+            if "harness change" in str(reason).lower():
+                last_change = entry.get("ts")
+                break
+    except Exception:
+        last_change = None
+    return {
+        "fingerprint": fingerprint,
+        "last_change": last_change,
+    }
+
+
+@router.get("/agent/auto_demotions")
+def agent_auto_demotions(rt: Runtime = Depends(get_rt), limit: int = 20) -> dict[str, Any]:
+    audits = rt.store.get_audit_log(limit=limit * 2)
+    demotions = []
+    for entry in audits:
+        if entry.get("actor") != "agent" or entry.get("action") != "mode_auto_demoted":
+            continue
+        demotions.append({
+            "ts": entry.get("ts"),
+            "from": (entry.get("payload") or {}).get("from"),
+            "to": (entry.get("payload") or {}).get("to"),
+            "reason": (entry.get("payload") or {}).get("reason"),
+        })
+        if len(demotions) >= limit:
+            break
+    return {"demotions": demotions, "count": len(demotions)}
+
+
+@router.get("/drafts/active")
+def active_drafts(rt: Runtime = Depends(get_rt), limit: int = 50) -> dict[str, Any]:
+    drafts = rt.store.pending_drafts(limit=limit)
+    # Ensure expires_at is ISO string
+    out = []
+    for d in drafts:
+        out.append({
+            "id": d.get("id"),
+            "symbol": d.get("symbol"),
+            "side": d.get("side"),
+            "state": d.get("state"),
+            "created_at": d.get("created_at"),
+            "expires_at": d.get("expires_at"),
+        })
+    return {"drafts": out, "count": len(out)}
+
+
 def _skill_subject(rt: Runtime, skill: str, **kwargs) -> str:
     if skill == "analysis_narrative":
         analysis_id = kwargs.get("analysis_id")
