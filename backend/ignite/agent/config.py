@@ -71,6 +71,7 @@ class AgentConfig:
     scale_in_atr: float = 1.5
     scale_out_levels: tuple[float, ...] = (1.0, 2.0, 3.0)
     max_correlation: float = 0.7
+    max_consecutive_losses: int = 3
 
     @classmethod
     def from_env(cls) -> "AgentConfig":
@@ -102,6 +103,7 @@ class AgentConfig:
             scale_in_atr=float(os.getenv("IGNITE_AGENT_SCALE_IN_ATR", "1.5")),
             scale_out_levels=_parse_float_csv(os.getenv("IGNITE_AGENT_SCALE_OUT_LEVELS")),
             max_correlation=float(os.getenv("IGNITE_AGENT_MAX_CORRELATION", "0.7")),
+            max_consecutive_losses=int(os.getenv("IGNITE_AGENT_MAX_CONSECUTIVE_LOSSES", "3")),
         )
 
     def to_risk_config(self, max_drift_atr: float = 0.30) -> RiskConfig:
@@ -150,6 +152,7 @@ class AgentConfigPatch(BaseModel):
     scale_in_atr: float | None = None
     scale_out_levels: list[float] | None = None
     max_correlation: float | None = None
+    max_consecutive_losses: int | None = None
 
 
 def validate_patch(patch: dict[str, Any]) -> dict[str, Any]:

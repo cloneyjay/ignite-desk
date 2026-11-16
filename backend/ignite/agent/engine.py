@@ -1,26 +1,32 @@
-"""Agent engine — core decision loop."""
+"""Agent engine — scheduled cycle driver for the LLM trader.
+
+The LLM (via ``Orchestrator``/``LLMHarness``) is the only decision maker, in every
+operating mode. The mode only decides what happens to the decision:
+
+* ``observe`` / ``prepare`` — the decision is journaled, nothing is executed
+  (shadow evaluation of the LLM on live data).
+* ``autonomous`` — a LONG/SHORT decision with a matching draft is executed through
+  ``execute_draft_autonomous`` and its full guard chain.
+
+The engine also owns the cycle-level circuit breakers (daily loss, position cap,
+consecutive-loss streak) which the LLM cannot influence.
+"""
 
 from __future__ import annotations
 
-import uuid
 import json
+import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Literal
+from datetime import datetime, timedelta, timezone
+from typing import Any, Literal
 
 from backend.ignite.agent.config import AgentConfig
+from backend.ignite.agent.decision import Decision
 from backend.ignite.agent.orchestrator import Orchestrator
-from backend.ignite.agent.synthesis import (
-    FundamentalContext,
-    TechnicalContext,
-    AttributionContext,
-    build_fundamental_context,
-    build_technical_context,
-    build_attribution_context,
-    synthesise,
-)
-from backend.ignite.services.runtime import Runtime
 from backend.ignite.services.execution import ExecutionError, execute_draft_autonomous
+from backend.ignite.services.runtime import Runtime
+
+LOSS_STREAK_LOOKBACK_DAYS = 7
 
 
 @dataclass
@@ -46,8 +52,17 @@ class CycleResult:
     symbol_decisions: list["SymbolDecision"]
 
 
+@dataclass
+class GuardResult:
+    ok: bool
+    reason: str | None = None
+
+
+_SIDE_FOR_ACTION = {"LONG": "buy", "SHORT": "sell"}
+
+
 class AgentEngine:
-    """Core agent decision engine."""
+    """Drives scheduled LLM trading cycles."""
 
     def __init__(self, rt: Runtime, config: "AgentConfig") -> None:
         self.rt = rt
@@ -82,13 +97,10 @@ class AgentEngine:
                 symbol_decisions=[],
             )
 
-        symbols = self._get_symbols()
-        decisions = []
-
-        for symbol in symbols:
+        decisions: list[SymbolDecision] = []
+        for symbol in self._get_symbols():
             try:
-                decision = self.analyse_symbol(symbol, self.config.timeframe)
-                decisions.append(decision)
+                decisions.append(self.analyse_symbol(symbol, self.config.timeframe))
             except Exception as exc:  # noqa: BLE001
                 decisions.append(
                     SymbolDecision(
@@ -125,68 +137,70 @@ class AgentEngine:
         )
 
     def analyse_symbol(self, symbol: str, timeframe: str) -> "SymbolDecision":
-        """Run analysis and synthesis for a single symbol."""
-        # Check if we should use the new orchestrator (autonomous mode)
-        if self.rt.config().operating_mode == "autonomous":
-            return self._analyse_symbol_orchestrator(symbol, timeframe)
-
-        # Legacy path for prepare/observe modes
-        return self._analyse_symbol_legacy(symbol, timeframe)
-
-    def _analyse_symbol_orchestrator(self, symbol: str, timeframe: str) -> "SymbolDecision":
-        """Analyse using the new orchestrator with LLM tool calling."""
+        """Ask the LLM for a decision on one symbol, journal it, execute if allowed."""
+        mode = self.rt.config().operating_mode
         orchestrator = Orchestrator(self.rt)
         decision = orchestrator.run_cycle(symbol, timeframe)
+        meta = orchestrator.last_run
 
-        # Persist decision
+        is_entry = decision.action in ("LONG", "SHORT")
+        p_up, edge_atr = self._signal_numbers(decision.links.analysis_id)
+
+        executed = False
+        execution_error: str | None = None
+        if is_entry:
+            if mode != "autonomous":
+                execution_error = f"shadow: {mode} mode does not execute"
+            else:
+                execution_error = self._validate_entry(decision)
+                if execution_error is None:
+                    try:
+                        execute_draft_autonomous(self.rt, str(decision.links.draft_id))
+                        executed = True
+                    except ExecutionError as exc:
+                        execution_error = f"{exc.code}: {exc.detail}"
+
         self.rt.store.insert_agent_decision(
             {
-                "id": uuid.uuid4().hex,
+                "id": decision.links.decision_id,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "symbol": symbol,
                 "timeframe": timeframe,
                 "analysis_id": decision.links.analysis_id,
-                "signal_side": decision.action if decision.action in ("LONG", "SHORT") else "NONE",
-                "p_up": 0.0,  # Not directly available from orchestrator
-                "edge_atr": 0.0,
+                "signal_side": decision.action if is_entry else "NONE",
+                "p_up": p_up,
+                "edge_atr": edge_atr,
                 "decision": decision.action,
                 "confidence": decision.conviction,
                 "reasoning": decision.thesis,
-                "executed": False,
-                "execution_error": None,
+                "executed": executed,
+                "execution_error": execution_error,
                 "draft_id": decision.links.draft_id,
-                "attribution_json": "{}",
+                "attribution_json": json.dumps(
+                    {
+                        "provider": meta.get("provider"),
+                        "model": meta.get("model"),
+                        "operating_mode": mode,
+                        "execution_mode": self.rt.config().execution_mode,
+                        "tools_used": meta.get("tools_used", []),
+                        "invalidate_if": decision.invalidate_if,
+                        "evidence": decision.evidence,
+                        "expected_rr": decision.expected_rr,
+                    }
+                ),
                 "fundamental_json": "{}",
                 "technical_json": "{}",
                 "risk_json": json.dumps(self.rt.risk_config().__dict__),
             }
         )
 
-        # Execute if LONG/SHORT
-        executed = False
-        execution_error = None
-        if decision.action in ("LONG", "SHORT"):
-            from backend.ignite.services.gateway import OrderRequest
-            req = OrderRequest(
-                symbol=symbol,
-                side="buy" if decision.action == "LONG" else "sell",
-                lots=decision.risk.lots,
-                sl=decision.risk.sl,
-                tp=decision.risk.tp,
-                decision_id=decision.links.decision_id,
-            )
-            result = self.rt.gateway.place(req)
-            executed = result.ok
-            if not result.ok:
-                execution_error = f"{result.code}: {result.detail}"
-
         return SymbolDecision(
             symbol=symbol,
             timeframe=timeframe,
-            action="ENTER" if decision.action in ("LONG", "SHORT") else "SKIP",
-            signal_side=decision.action if decision.action in ("LONG", "SHORT") else "NONE",
-            p_up=0.0,
-            edge_atr=0.0,
+            action="ENTER" if is_entry else "SKIP",
+            signal_side=decision.action if is_entry else "NONE",  # type: ignore[arg-type]
+            p_up=p_up,
+            edge_atr=edge_atr,
             confidence=decision.conviction,
             reasoning=decision.thesis,
             draft_id=decision.links.draft_id,
@@ -194,129 +208,40 @@ class AgentEngine:
             error=execution_error,
         )
 
-    def _analyse_symbol_legacy(self, symbol: str, timeframe: str) -> "SymbolDecision":
-        """Run analysis and synthesis for a single symbol (legacy path)."""
-        # Run analysis graph
-        from backend.ignite.analysis.graph import run_analysis
-        from backend.ignite.analysis.risk import RiskConfig
+    # ------------------------------------------------------------ entry checks
 
-        clock = self.rt.clock()
-        equity = float(self.rt.account().get("equity") or 0.0)
-        if equity <= 0:
-            return SymbolDecision(
-                symbol=symbol,
-                timeframe=timeframe,
-                action="ERROR",
-                signal_side="NONE",
-                p_up=0.0,
-                edge_atr=0.0,
-                confidence=0.0,
-                reasoning="Account equity unavailable",
-                draft_id=None,
-                executed=False,
-                error="No equity",
+    def _validate_entry(self, decision: Decision) -> str | None:
+        """The LLM's stated decision must match the draft it wants executed.
+
+        Returns an error string (fail closed) or None when consistent.
+        """
+        draft_id = decision.links.draft_id
+        if draft_id is None or draft_id == "":
+            return "no draft: autonomous execution requires a draft"
+        draft = self.rt.store.get_draft(draft_id)
+        if draft is None:
+            return f"draft_not_found: {draft_id}"
+        expected = _SIDE_FOR_ACTION[decision.action]
+        if str(draft.get("side", "")).lower() != expected:
+            return (
+                f"decision_draft_mismatch: decision {decision.action} "
+                f"but draft side is {draft.get('side')}"
             )
+        if draft.get("symbol") not in (None, decision.symbol):
+            return "decision_draft_mismatch: symbol differs"
+        return None
 
-        risk_config = RiskConfig(max_drift_atr=self.rt.settings.max_drift_atr)
-
+    def _signal_numbers(self, analysis_id: str | None) -> tuple[float, float]:
+        """Kronos numbers the LLM saw, for the journal. 0.0 when unavailable."""
+        if not analysis_id:
+            return 0.0, 0.0
         try:
-            result = run_analysis(
-                self.rt.mcp,
-                clock,
-                self.rt.forecast,
-                symbol,
-                timeframe,
-                equity,
-                risk_config=risk_config,
-            )
-            self.rt.store.save_analysis(result, self.rt.settings.draft_ttl_s)
-        except Exception as exc:  # noqa: BLE001
-            return SymbolDecision(
-                symbol=symbol,
-                timeframe=timeframe,
-                action="ERROR",
-                signal_side="NONE",
-                p_up=0.0,
-                edge_atr=0.0,
-                confidence=0.0,
-                reasoning=f"Analysis failed: {exc}",
-                draft_id=None,
-                executed=False,
-                error=str(exc),
-            )
+            row = self.rt.store.get_analysis(analysis_id) or {}
+        except Exception:  # noqa: BLE001 - journal only
+            return 0.0, 0.0
+        return float(row.get("p_up") or 0.0), float(row.get("edge_atr") or 0.0)
 
-        # Build contexts
-        fundamental = build_fundamental_context(self.rt, symbol)
-        technical = build_technical_context(self.rt, symbol, timeframe)
-        attribution = build_attribution_context(self.rt, result.analysis_id)
-
-        # Synthesize decision
-        decision = synthesise(
-            forecast=result,
-            fundamental=fundamental,
-            technical=technical,
-            attribution=attribution,
-            risk=self.rt.risk_config(),
-        )
-
-        # Build reasoning
-        reasons = list(result.signal.reasons)
-        if decision.action == "ENTER":
-            reasons.append(f"Draft created: {decision.reasoning}")
-        elif decision.action == "SKIP":
-            reasons.append(decision.reasoning)
-
-        reasoning = ". ".join(reasons)
-
-        # Execute if ENTER and draft is executable
-        executed = False
-        draft_id = None
-        execution_error = None
-        if decision.action == "ENTER" and result.draft and not result.draft.blocked:
-            draft_id = result.draft_id
-            try:
-                execute_draft_autonomous(self.rt, draft_id)
-                executed = True
-            except ExecutionError as exc:
-                execution_error = str(exc)
-                reasons.append(f"Autonomous execution blocked: {exc}")
-
-        self.rt.store.insert_agent_decision(
-            {
-                "id": uuid.uuid4().hex,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "symbol": symbol,
-                "timeframe": timeframe,
-                "analysis_id": result.analysis_id,
-                "signal_side": result.signal.side.upper(),
-                "p_up": result.signal.p_up,
-                "edge_atr": result.signal.edge_atr,
-                "decision": decision.action,
-                "confidence": decision.confidence,
-                "reasoning": ". ".join(reasons),
-                "executed": executed,
-                "execution_error": execution_error,
-                "draft_id": draft_id,
-                "attribution_json": json.dumps(attribution.__dict__),
-                "fundamental_json": json.dumps(fundamental.__dict__),
-                "technical_json": json.dumps(technical.__dict__),
-                "risk_json": json.dumps(self.rt.risk_config().__dict__),
-            }
-        )
-
-        return SymbolDecision(
-            symbol=symbol,
-            timeframe=timeframe,
-            action=decision.action,
-            signal_side=result.signal.side.upper(),
-            p_up=result.signal.p_up,
-            edge_atr=result.signal.edge_atr,
-            confidence=decision.confidence,
-            reasoning=reasoning,
-            draft_id=draft_id,
-            executed=executed,
-            error=execution_error,
-        )
+    # ------------------------------------------------------------------ config
 
     def _get_symbols(self) -> list[str]:
         if self.config.symbols:
@@ -329,15 +254,10 @@ class AgentEngine:
             return bool(stored.get("enabled"))
         return self.config.enabled
 
-    def _check_guards(self) -> "GuardResult":
-        """Check global guards before running cycle."""
-        from dataclasses import dataclass
+    # ---------------------------------------------------------------- breakers
 
-        @dataclass
-        class GuardResult:
-            ok: bool
-            reason: str | None = None
-
+    def _check_guards(self) -> GuardResult:
+        """Cycle-level circuit breakers. The LLM has no tool to change these."""
         if self.rt.kill_switch():
             return GuardResult(ok=False, reason="Kill switch enabled")
 
@@ -350,9 +270,51 @@ class AgentEngine:
                 ok=False, reason=f"Daily loss limit hit: {pnl.total_usd:.2f}"
             )
 
-        # Check max concurrent positions
         positions = self.rt.store.agent_positions()
         if len(positions) >= config.max_concurrent_positions:
             return GuardResult(ok=False, reason="Max concurrent positions reached")
 
+        streak = self._loss_streak_guard(config.max_consecutive_losses)
+        if not streak.ok:
+            return streak
+
         return GuardResult(ok=True)
+
+    def _loss_streak_guard(self, limit: int) -> GuardResult:
+        """Stop trading after ``limit`` consecutive losing round-trips.
+
+        Fails closed when history is unavailable. ``limit <= 0`` disables it.
+        """
+        if limit <= 0:
+            return GuardResult(ok=True)
+        from backend.ignite.services.broker import closed_trades
+
+        try:
+            now = datetime.now(timezone.utc)
+            trades = closed_trades(
+                self.rt.mcp,
+                self.rt.clock(),
+                now - timedelta(days=LOSS_STREAK_LOOKBACK_DAYS),
+                now,
+            )
+        except Exception as exc:  # noqa: BLE001 - a guard must fail closed
+            return GuardResult(ok=False, reason=f"loss_streak_unavailable: {exc}")
+        return loss_streak_result(trades, limit)
+
+
+def loss_streak_result(trades: list[dict[str, Any]], limit: int) -> GuardResult:
+    """Pure helper: newest-first consecutive losses vs. ``limit``."""
+    ordered = sorted(
+        trades, key=lambda t: str(t.get("close_time") or ""), reverse=True
+    )
+    streak = 0
+    for trade in ordered:
+        if float(trade.get("net") or 0.0) < 0:
+            streak += 1
+        else:
+            break
+    if streak >= limit:
+        return GuardResult(
+            ok=False, reason=f"Loss streak: {streak} consecutive losing trades"
+        )
+    return GuardResult(ok=True)

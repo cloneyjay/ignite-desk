@@ -6,6 +6,7 @@ a permission (read/prepare/execute), a timeout, and a result schema.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from collections.abc import Awaitable, Callable
@@ -1427,7 +1428,7 @@ class ToolRegistry:
             lots=args["lots"],
             sl=args["sl"],
             tp=args["tp"],
-            decision_id="risk_eval_" + str(hash(frozenset(args.items()))),
+            decision_id="risk_eval_" + hashlib.sha256(repr(sorted(args.items())).encode()).hexdigest()[:16],
         )
         result = rt.gateway.validate(req)
         return {

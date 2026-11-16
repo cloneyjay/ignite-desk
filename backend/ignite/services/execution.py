@@ -386,6 +386,17 @@ def execute_draft_autonomous(rt: Runtime, draft_id: str) -> dict[str, Any]:
         raise ExecutionError(403, "agent_disabled", "autonomous agent is disabled")
     if rt.kill_switch():
         raise ExecutionError(409, "kill_switch", "kill switch is enabled")
+    # Bypass-immune: live execution requires autonomy level >= 2
+    agent_config = rt.config()
+    if (
+        agent_config.execution_mode == "live"
+        and agent_config.autonomy_level < 2
+    ):
+        raise ExecutionError(
+            403,
+            "autonomy_insufficient",
+            "live execution requires autonomy level >= 2",
+        )
     token = rt.issue_token(draft_id, draft["expires_at"])
     return execute_draft(
         rt,

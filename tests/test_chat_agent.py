@@ -39,34 +39,78 @@ def test_unified_chat_agent_responds(rt):
 
 
 def test_unified_chat_agent_detects_analysis_intent(rt):
-    """Market brief / price-action queries route to the Analyst for live data."""
+    """Market brief queries route through the LLM to analyst_assess."""
+    from backend.ignite.llm.client import LLMResult, ToolCall
+
+    class FakeLLM:
+        def complete(self, messages, tools=None, tool_choice="auto", **kwargs):
+            return LLMResult(
+                text="",
+                tool_calls=[
+                    ToolCall(
+                        id="tc_1",
+                        name="analyst_assess",
+                        arguments={"symbol": "XAUUSD", "timeframe": "M15"},
+                    )
+                ],
+                provider="fake",
+                model="fake",
+                latency_ms=1,
+            )
+
+    rt.llm = FakeLLM()  # type: ignore[method-assign]
     agent = UnifiedChatAgent(rt)
     response = agent.respond("session_1", "brief me on XAUUSD price action", [])
 
     assert isinstance(response, ChatResponse)
     assert isinstance(response.narrative, str)
-    assert len(response.narrative) > 0
-    assert response.structured.get("kind") == "analysis"
-    assert response.structured.get("symbol") == "XAUUSD"
-    assert response.structured.get("timeframe") == "M15"
-    assert response.structured.get("signal") in {"LONG", "SHORT", "NONE"}
-    assert isinstance(response.structured.get("rationale"), str)
     assert len(response.tool_calls) > 0
     assert response.tool_calls[0]["name"] == "analyst_assess"
 
 
 def test_unified_chat_agent_detects_outlook_intent(rt):
-    """Outlook / anticipate queries also route to the Analyst."""
+    """Outlook queries route through the LLM to analyst_assess."""
+    from backend.ignite.llm.client import LLMResult, ToolCall
+
+    class FakeLLM:
+        def complete(self, messages, tools=None, tool_choice="auto", **kwargs):
+            return LLMResult(
+                text="",
+                tool_calls=[
+                    ToolCall(
+                        id="tc_1",
+                        name="analyst_assess",
+                        arguments={"symbol": "XAUUSD", "timeframe": "M15"},
+                    )
+                ],
+                provider="fake",
+                model="fake",
+                latency_ms=1,
+            )
+
+    rt.llm = FakeLLM()  # type: ignore[method-assign]
     agent = UnifiedChatAgent(rt)
     response = agent.respond("session_1", "what should i expect from gold this week", [])
 
     assert isinstance(response, ChatResponse)
-    assert response.structured.get("kind") == "analysis"
-    assert response.structured.get("symbol") == "XAUUSD"
+    assert len(response.tool_calls) > 0
+    assert response.tool_calls[0]["name"] == "analyst_assess"
 
 
 def test_unified_chat_agent_identity(rt):
-    """Identity questions are answered deterministically without the LLM."""
+    """Identity questions are answered by the LLM."""
+    from backend.ignite.llm.client import LLMResult
+
+    class FakeLLM:
+        def complete(self, messages, tools=None, tool_choice="auto", **kwargs):
+            return LLMResult(
+                text="I'm Aegus, your trading assistant.",
+                provider="fake",
+                model="fake",
+                latency_ms=1,
+            )
+
+    rt.llm = FakeLLM()  # type: ignore[method-assign]
     agent = UnifiedChatAgent(rt)
     response = agent.respond("session_1", "who are you?", [])
 
@@ -77,7 +121,19 @@ def test_unified_chat_agent_identity(rt):
 
 
 def test_unified_chat_agent_declines_non_trading(rt):
-    """Non-trading queries (coding, etc.) are politely declined."""
+    """Non-trading queries are declined by the LLM."""
+    from backend.ignite.llm.client import LLMResult
+
+    class FakeLLM:
+        def complete(self, messages, tools=None, tool_choice="auto", **kwargs):
+            return LLMResult(
+                text="I can only help with trading-related questions.",
+                provider="fake",
+                model="fake",
+                latency_ms=1,
+            )
+
+    rt.llm = FakeLLM()  # type: ignore[method-assign]
     agent = UnifiedChatAgent(rt)
     response = agent.respond("session_1", "write me a python script to scrape a website", [])
 

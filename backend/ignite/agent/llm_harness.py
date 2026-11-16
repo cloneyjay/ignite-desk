@@ -54,6 +54,7 @@ class LLMHarness:
         tool_specs: list[ToolSpec],
         execute: Callable[[str, dict[str, Any]], dict[str, Any]],
         max_steps: int = MAX_TOOL_STEPS,
+        max_tool_calls: int | None = None,
         deadline_s: float = TURN_DEADLINE_S,
     ) -> None:
         self.rt = rt
@@ -61,6 +62,7 @@ class LLMHarness:
         self.tool_specs = tool_specs
         self.execute = execute
         self.max_steps = max_steps
+        self.max_tool_calls = max_tool_calls
         self.deadline_s = deadline_s
 
     # ------------------------------------------------------------------ run
@@ -114,6 +116,11 @@ class LLMHarness:
                 }
             )
             for tc in result.tool_calls:
+                if self.max_tool_calls is not None:
+                    if len(tool_call_records) >= self.max_tool_calls:
+                        # Budget exhausted: let the model produce a final answer
+                        # from what it has already gathered.
+                        break
                 tool_result = self.execute(tc.name, tc.arguments or {})
                 tool_call_records.append(
                     {
@@ -130,6 +137,9 @@ class LLMHarness:
                         "content": json.dumps(tool_result, default=str),
                     }
                 )
+            else:
+                continue
+            break
 
         # Tool budget or deadline exhausted: ask the model for a final answer
         # from what it already gathered. Still the model, never a template.

@@ -8,12 +8,20 @@ Launch scope: **XAUUSD, demo account**. Architected for additional symbols and l
 
 ## Design invariants
 
-- The LLM can **draft** a trade. In UI mode it can never **execute** one: execution needs a
-  draft id plus an explicit confirmation from the UI. Autonomous execution is opt-in
-  (operating_mode = autonomous, autonomy level >= 2, kill switch off, and live promotion
-  confirmed with an account number) and runs the same drift, spread, margin, news and kill
-  switch guards.
-- All numbers come from a deterministic, versioned analysis graph. LLM output is narrative only.
+- **The LLM is the trader.** One harness (`LLMHarness`) drives chat and the scheduled cycle;
+  there is no second deterministic decision path. The LLM uses tools (Kronos forecast, MT5
+  market data, calendar, drafts) and returns a structured decision for every cycle,
+  including no-trades. Every decision is journaled with provider, model and tools used.
+- The LLM decides; deterministic code **bounds** it. Risk caps, daily loss, position caps,
+  loss-streak breaker, spread/news/drift guards, mandatory stop loss and the kill switch are
+  config the LLM has no tool to change.
+- In UI mode the LLM can draft but never execute: execution needs a draft id plus an explicit
+  confirmation. In `observe`/`prepare` modes the autonomous cycle runs the LLM in **shadow**:
+  decisions are journaled, never executed. Autonomous execution is opt-in (operating_mode =
+  autonomous, autonomy level >= 2 for live, kill switch off, live promotion confirmed with an
+  account number) and the decision must match its draft (LONG = buy, SHORT = sell).
+- Numbers the LLM acts on come from tools (analysis graph, Kronos, MT5), never from its own
+  text. Treat news text as untrusted data.
 - Every service fails **closed**: no data or no model means no trade, never a guessed one.
 - 100% local. The only outbound calls are the optional cloud LLM provider you configure.
 
@@ -181,6 +189,7 @@ Results go to `spikes/kronos_latency/results.md`.
 - [x] P1 backend core (MCP client, bars, analysis graph, CLI)
 - [x] P1 API: REST + SSE, confirmation-token execution, calendar/blackouts
 - [x] P2 dashboard MVP (portfolio, watchlist, analysis drawer, execution dialog, history, news)
-- [ ] P3 news narrative / agent chat
-- [ ] P4 hardening / walk-forward
+- [x] P3 news narrative / agent chat
+- [x] Single LLM decision path, shadow mode for observe/prepare, decision journal, loss-streak breaker
+- [ ] P4 evaluation: score journaled decisions vs outcomes and baselines (follow-Kronos, no-trade); autonomy promotion/demotion on measured stats; pin model per decision
 - [ ] P5 multi-symbol

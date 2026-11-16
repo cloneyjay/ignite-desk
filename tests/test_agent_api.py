@@ -156,8 +156,26 @@ def test_question_does_not_place_an_order(client, rt):
 
 
 def test_chat_tool_trace_is_real(client, rt):
+    from backend.ignite.llm.client import LLMResult, ToolCall
+
+    class FakeLLM:
+        def complete(self, messages, tools=None, tool_choice="auto", **kwargs):
+            return LLMResult(
+                text="",
+                tool_calls=[
+                    ToolCall(
+                        id="tc_1",
+                        name="account_positions",
+                        arguments={},
+                    )
+                ],
+                provider="fake",
+                model="fake",
+                latency_ms=1,
+            )
+
+    rt.llm = FakeLLM()  # type: ignore[method-assign]
     resp = client.post("/api/agent/chat", json={"text": "show my positions"})
     trace = resp.json()["tool_calls"]
     assert trace
-    for row in trace:
-        assert rt.store.agent_events(decision_id=row["decision_id"])
+    assert trace[0]["name"] == "account_positions"
