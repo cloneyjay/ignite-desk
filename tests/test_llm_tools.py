@@ -34,15 +34,15 @@ def test_native_tool_calls_returned():
     client = FakeLLMClient()
     client.set_response(
         text="I'll check your account",
-        tool_calls=[{"id": "call_1", "name": "account.snapshot", "arguments": {}}],
+        tool_calls=[{"id": "call_1", "name": "account_snapshot", "arguments": {}}],
     )
     resp = client.complete(
         messages=[{"role": "user", "content": "test"}],
-        tools=[{"type": "function", "function": {"name": "account.snapshot"}}],
+        tools=[{"type": "function", "function": {"name": "account_snapshot"}}],
     )
     assert resp.tool_calls is not None
     assert len(resp.tool_calls) >= 1
-    assert resp.tool_calls[0].name == "account.snapshot"
+    assert resp.tool_calls[0].name == "account_snapshot"
 
 
 def test_malformed_args_raises_toolcallerror():
@@ -63,7 +63,7 @@ def test_malformed_args_raises_toolcallerror():
         "tool_calls": [
             {
                 "id": "call_1",
-                "function": {"name": "account.snapshot", "arguments": "not valid json"},
+                "function": {"name": "account_snapshot", "arguments": "not valid json"},
             }
         ]
     }

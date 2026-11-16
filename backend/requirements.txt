@@ -5,9 +5,12 @@ httpx
 python-dotenv
 pandas
 numpy
-torch
 einops
 huggingface_hub
 safetensors
 psutil
 pytest
+apscheduler
+
+# Torch is installed separately in the Dockerfile (CPU-only wheel) to avoid
+# pulling ~2GB of CUDA dependencies on CPU-only hosts.

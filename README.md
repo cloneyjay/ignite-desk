@@ -8,8 +8,11 @@ Launch scope: **XAUUSD, demo account**. Architected for additional symbols and l
 
 ## Design invariants
 
-- The LLM can **draft** a trade. It can never **execute** one. Execution is a separate
-  endpoint that requires a draft id plus an explicit confirmation from the UI.
+- The LLM can **draft** a trade. In UI mode it can never **execute** one: execution needs a
+  draft id plus an explicit confirmation from the UI. Autonomous execution is opt-in
+  (operating_mode = autonomous, autonomy level >= 2, kill switch off, and live promotion
+  confirmed with an account number) and runs the same drift, spread, margin, news and kill
+  switch guards.
 - All numbers come from a deterministic, versioned analysis graph. LLM output is narrative only.
 - Every service fails **closed**: no data or no model means no trade, never a guessed one.
 - 100% local. The only outbound calls are the optional cloud LLM provider you configure.

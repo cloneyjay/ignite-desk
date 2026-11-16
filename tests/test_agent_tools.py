@@ -22,7 +22,7 @@ def test_tool_registry_filters_by_permission():
 
 def test_tool_spec_has_required_fields():
     spec = ToolSpec(
-        name="account.snapshot",
+        name="account_snapshot",
         permission="read",
         description="...",
         input_schema={},
@@ -30,5 +30,5 @@ def test_tool_spec_has_required_fields():
         timeout_s=10,
         handler=lambda rt, args: {},
     )
-    assert spec.name == "account.snapshot"
+    assert spec.name == "account_snapshot"
     assert spec.permission == "read"

@@ -58,13 +58,13 @@ def test_autonomy_levels(rt):
     rt.config_service.update({"autonomy_level": 2, "operating_mode": "autonomous", "execution_mode": "live"})
     tools = rt.tool_registry.get_available("autonomous", False, 2)
     execute_tools = [t for t in tools if t.permission == "execute"]
-    assert any(t.name == "execution.place_order" for t in execute_tools)
+    assert any(t.name == "execution_place_order" for t in execute_tools)
     
     # Level 0 should not have execute tools
     rt.config_service.update({"autonomy_level": 0})
     tools = rt.tool_registry.get_available("autonomous", False, 0)
     execute_tools = [t for t in tools if t.permission == "execute"]
-    assert not any(t.name == "execution.place_order" for t in execute_tools)
+    assert not any(t.name == "execution_place_order" for t in execute_tools)
 
 
 def test_policy_enforcement(rt):
@@ -118,4 +118,4 @@ def test_autonomy_level_gating(rt):
     rt.config_service.update({"autonomy_level": 2})
     tools = rt.tool_registry.get_available("autonomous", False, 2)
     execute_tools = [t for t in tools if t.permission == "execute"]
-    assert any(t.name == "execution.place_order" for t in execute_tools)
+    assert any(t.name == "execution_place_order" for t in execute_tools)

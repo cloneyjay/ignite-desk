@@ -1,0 +1,53 @@
+# docker-compose.yml — Ignite Desk
+#
+# Usage:
+#   docker compose build --no-cache   # clean build, no stale layers
+#   docker compose up                 # start backend + kronos worker
+#
+# The --no-cache flag guarantees no old code or __pycache__ is reused,
+# which directly solves the "restart still runs old code" problem.
+
+services:
+  # Backend API — chat, analysis, execution guards, dashboard API
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      IGNITE_BIND_HOST: 0.0.0.0
+      IGNITE_DB_PATH: /data/ignite.db
+      KRONOS_WORKER_URL: http://kronos:8765
+      MT5_MCP_URL: http://host.docker.internal:22346/mcp
+      MT5_MCP_EDITOR_URL: http://host.docker.internal:22345/mcp
+      OLLAMA_BASE_URL: http://host.docker.internal:11434/v1
+    volumes:
+      - ./data:/data:rw
+      - ./backend:/app/backend:ro
+      - ./docs:/app/docs:ro
+    depends_on:
+      - kronos
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Kronos price-forecasting worker (provides p_up / edge_atr / fan paths)
+  kronos:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      KRONOS_BIND_HOST: 0.0.0.0
+    volumes:
+      - ./vendor:/app/vendor:ro
+      - ./backend:/app/backend:ro
+    command: python -m backend.ignite.forecasting.worker
+    restart: unless-stopped

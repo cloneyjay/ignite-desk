@@ -122,8 +122,8 @@ def load_settings() -> Settings:
             extra_base_url=os.getenv("EXTRA_BASE_URL", "").rstrip("/"),
             extra_api_key=os.getenv("EXTRA_API_KEY", "").strip(),
             extra_model=os.getenv("EXTRA_MODEL", ""),
-            timeout_s=float(os.getenv("IGNITE_LLM_TIMEOUT_S", "20")),
-            max_tokens=int(os.getenv("IGNITE_LLM_MAX_TOKENS", "320")),
+            timeout_s=float(os.getenv("IGNITE_LLM_TIMEOUT_S", "60")),
+            max_tokens=int(os.getenv("IGNITE_LLM_MAX_TOKENS", "2000")),
         ),
         agent_timeout_s=float(os.getenv("IGNITE_AGENT_TIMEOUT_S", "25")),
     )

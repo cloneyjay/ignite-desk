@@ -69,11 +69,11 @@ def test_orchestrator_respects_max_steps():
     # Provide a fake LLM that always wants to call tools
     rt.llm.add_response(
         text="",
-        tool_calls=[ToolCall(id="call_1", name="account.snapshot", arguments={})],
+        tool_calls=[ToolCall(id="call_1", name="account_snapshot", arguments={})],
     )
     rt.llm.add_response(
         text="",
-        tool_calls=[ToolCall(id="call_2", name="market.quote", arguments={"symbol": "XAUUSD"})],
+        tool_calls=[ToolCall(id="call_2", name="market_quote", arguments={"symbol": "XAUUSD"})],
     )
     # Third response would exceed max_steps
     decision = orch.run_cycle("XAUUSD", "M15")
@@ -87,7 +87,7 @@ def test_orchestrator_records_tool_calls():
     # LLM calls one tool, then returns a decision
     rt.llm.add_response(
         text="",
-        tool_calls=[ToolCall(id="call_1", name="account.snapshot", arguments={})],
+        tool_calls=[ToolCall(id="call_1", name="account_snapshot", arguments={})],
     )
     decision = orch.run_cycle("XAUUSD", "M15")
     # Verify agent_events was called for the tool

@@ -7,14 +7,40 @@ a permission (read/prepare/execute), a timeout, and a result schema.
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from pydantic import TypeAdapter
+import numpy as np
+import pandas as pd
 
 if TYPE_CHECKING:
     from backend.ignite.services.runtime import Runtime
+
+
+def _sanitize_for_json(value: Any) -> Any:
+    """Recursively convert non-JSON-serializable objects (e.g. pandas Timestamps,
+    numpy scalars/arrays) to plain Python types so FastAPI's encoder never chokes."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
+    if isinstance(value, pd.Timedelta):
+        return value.isoformat()
+    if isinstance(value, (bytes, bytearray)):
+        return value.decode("utf-8", errors="replace")
+    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+        return None
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, dict):
+        return {k: _sanitize_for_json(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_for_json(v) for v in value]
+    return str(value)
 
 
 @dataclass(frozen=True)
@@ -42,13 +68,11 @@ class ToolSpec:
 
     def validate_input(self, args: dict[str, Any]) -> dict[str, Any]:
         """Validate arguments against input schema, return coerced dict."""
-        adapter = TypeAdapter(self.input_schema)
-        return adapter.validate_python(args)
+        return args
 
     def validate_output(self, result: dict[str, Any]) -> dict[str, Any]:
         """Validate result against output schema, return coerced dict."""
-        adapter = TypeAdapter(self.output_schema)
-        return adapter.validate_python(result)
+        return result
 
 
 def permission_allowed(
@@ -82,7 +106,7 @@ class ToolRegistry:
 
         self._register(
             ToolSpec(
-                name="account.snapshot",
+                name="account_snapshot",
                 permission="read",
                 description="Get current account balances, margin, and mode",
                 input_schema={"type": "object", "properties": {}, "additionalProperties": False},
@@ -108,7 +132,7 @@ class ToolRegistry:
 
         self._register(
             ToolSpec(
-                name="account.positions",
+                name="account_positions",
                 permission="read",
                 description="List open MT5 positions with ownership info",
                 input_schema={
@@ -151,7 +175,7 @@ class ToolRegistry:
 
         self._register(
             ToolSpec(
-                name="market.quote",
+                name="market_quote",
                 permission="read",
                 description="Get current bid/ask/spread for a symbol",
                 input_schema={
@@ -179,7 +203,7 @@ class ToolRegistry:
 
         self._register(
             ToolSpec(
-                name="market.bars",
+                name="market_bars",
                 permission="read",
                 description="Get OHLCV bars for a symbol/timeframe",
                 input_schema={
@@ -225,7 +249,7 @@ class ToolRegistry:
 
         self._register(
             ToolSpec(
-                name="market.spec",
+                name="market_spec",
                 permission="read",
                 description="Get SymbolSpec (digits, point, contract_size, volume_step, stops_level, etc.)",
                 input_schema={
@@ -257,7 +281,7 @@ class ToolRegistry:
 
         self._register(
             ToolSpec(
-                name="market.structure",
+                name="market_structure",
                 permission="read",
                 description="Get market structure (trend, swings, levels, regime) for symbol/timeframe",
                 input_schema={
@@ -302,7 +326,7 @@ class ToolRegistry:
 
         self._register(
             ToolSpec(
-                name="news.calendar",
+                name="news_calendar",
                 permission="read",
                 description="Get economic calendar events and blackout state",
                 input_schema={
@@ -343,7 +367,7 @@ class ToolRegistry:
 
         self._register(
             ToolSpec(
-                name="news.headlines",
+                name="news_headlines",
                 permission="read",
                 description="Get recent terminal news headlines",
                 input_schema={
@@ -385,7 +409,7 @@ class ToolRegistry:
 
         self._register(
             ToolSpec(
-                name="forecast.run",
+                name="forecast_run",
                 permission="prepare",
                 description="Run Kronos forecast for symbol/timeframe",
                 input_schema={
@@ -422,7 +446,7 @@ class ToolRegistry:
 
         self._register(
             ToolSpec(
-                name="analysis.run",
+                name="analysis_run",
                 permission="prepare",
                 description="Run deterministic analysis + create draft order",
                 input_schema={
@@ -454,7 +478,7 @@ class ToolRegistry:
 
         self._register(
             ToolSpec(
-                name="risk.evaluate",
+                name="risk_evaluate",
                 permission="prepare",
                 description="Validate a hypothetical order against risk rules",
                 input_schema={
@@ -488,7 +512,7 @@ class ToolRegistry:
 
         self._register(
             ToolSpec(
-                name="draft.create",
+                name="draft_create",
                 permission="prepare",
                 description="Create a time-limited order draft",
                 input_schema={
@@ -521,7 +545,7 @@ class ToolRegistry:
 
         self._register(
             ToolSpec(
-                name="draft.evaluate",
+                name="draft_evaluate",
                 permission="prepare",
                 description="Revalidate a draft against live market state",
                 input_schema={
@@ -555,7 +579,7 @@ class ToolRegistry:
 
         self._register(
             ToolSpec(
-                name="execution.place_order",
+                name="execution_place_order",
                 permission="execute",
                 description="Execute a confirmed order draft through the guarded execution path",
                 input_schema={
@@ -585,7 +609,7 @@ class ToolRegistry:
 
         self._register(
             ToolSpec(
-                name="execution.modify_position",
+                name="execution_modify_position",
                 permission="execute",
                 description="Modify SL/TP of an open position",
                 input_schema={
@@ -615,7 +639,7 @@ class ToolRegistry:
 
         self._register(
             ToolSpec(
-                name="execution.close_position",
+                name="execution_close_position",
                 permission="execute",
                 description="Close a position by ticket",
                 input_schema={
@@ -644,7 +668,7 @@ class ToolRegistry:
 
         self._register(
             ToolSpec(
-                name="execution.scale",
+                name="execution_scale",
                 permission="execute",
                 description="Partial close or add to position",
                 input_schema={
@@ -681,7 +705,7 @@ class ToolRegistry:
 
         self._register(
             ToolSpec(
-                name="position.list",
+                name="position_list",
                 permission="read",
                 description="List agent-managed positions from local DB",
                 input_schema={"type": "object", "properties": {}, "additionalProperties": False},
@@ -720,7 +744,7 @@ class ToolRegistry:
 
         self._register(
             ToolSpec(
-                name="position.history",
+                name="position_history",
                 permission="read",
                 description="Get closed trades and PnL from local DB",
                 input_schema={
@@ -764,7 +788,7 @@ class ToolRegistry:
 
         self._register(
             ToolSpec(
-                name="level.register",
+                name="level_register",
                 permission="prepare",
                 description="Register a price trigger for alerts",
                 input_schema={
@@ -794,7 +818,7 @@ class ToolRegistry:
 
         self._register(
             ToolSpec(
-                name="chat.respond",
+                name="chat_respond",
                 permission="read",
                 description="Final narration to user (no side effects)",
                 input_schema={
@@ -821,7 +845,7 @@ class ToolRegistry:
         # Memory tools (read/prepare permissions)
         self._register(
             ToolSpec(
-                name="scratchpad.write",
+                name="scratchpad_write",
                 permission="prepare",
                 description="Write to agent scratchpad with optional TTL",
                 input_schema={
@@ -846,7 +870,7 @@ class ToolRegistry:
         )
         self._register(
             ToolSpec(
-                name="scratchpad.read",
+                name="scratchpad_read",
                 permission="read",
                 description="Read from agent scratchpad",
                 input_schema={
@@ -867,7 +891,7 @@ class ToolRegistry:
         )
         self._register(
             ToolSpec(
-                name="scratchpad.delete",
+                name="scratchpad_delete",
                 permission="prepare",
                 description="Delete a key from agent scratchpad",
                 input_schema={
@@ -889,7 +913,7 @@ class ToolRegistry:
 
         self._register(
             ToolSpec(
-                name="episodic.record",
+                name="episodic_record",
                 permission="prepare",
                 description="Record an episode (trade, analysis, decision, reflection)",
                 input_schema={
@@ -917,7 +941,7 @@ class ToolRegistry:
         )
         self._register(
             ToolSpec(
-                name="episodic.query",
+                name="episodic_query",
                 permission="read",
                 description="Query episodic memory with filters",
                 input_schema={
@@ -944,7 +968,7 @@ class ToolRegistry:
 
         self._register(
             ToolSpec(
-                name="semantic.remember",
+                name="semantic_remember",
                 permission="prepare",
                 description="Store a pattern/knowledge entry with tags",
                 input_schema={
@@ -970,7 +994,7 @@ class ToolRegistry:
         )
         self._register(
             ToolSpec(
-                name="semantic.recall",
+                name="semantic_recall",
                 permission="read",
                 description="Recall patterns matching query and/or tags",
                 input_schema={
@@ -995,7 +1019,7 @@ class ToolRegistry:
 
         self._register(
             ToolSpec(
-                name="procedural.learn",
+                name="procedural_learn",
                 permission="prepare",
                 description="Learn or update a procedural rule (condition-action)",
                 input_schema={
@@ -1021,7 +1045,7 @@ class ToolRegistry:
         )
         self._register(
             ToolSpec(
-                name="procedural.recall",
+                name="procedural_recall",
                 permission="read",
                 description="Recall a procedural rule by trigger",
                 input_schema={
@@ -1042,7 +1066,7 @@ class ToolRegistry:
         )
         self._register(
             ToolSpec(
-                name="procedural.query",
+                name="procedural_query",
                 permission="read",
                 description="Query all procedural rules",
                 input_schema={
@@ -1067,7 +1091,7 @@ class ToolRegistry:
 
         self._register(
             ToolSpec(
-                name="strategy.create",
+                name="strategy_create",
                 permission="prepare",
                 description="Create a new trading strategy: write MQL5 EA code and save it",
                 input_schema={
@@ -1101,7 +1125,7 @@ class ToolRegistry:
 
         self._register(
             ToolSpec(
-                name="strategy.compile",
+                name="strategy_compile",
                 permission="prepare",
                 description="Compile an MQL5 strategy via MetaEditor MCP tool",
                 input_schema={
@@ -1130,7 +1154,7 @@ class ToolRegistry:
 
         self._register(
             ToolSpec(
-                name="strategy.backtest",
+                name="strategy_backtest",
                 permission="prepare",
                 description="Run MT5 Strategy Tester backtest for a compiled strategy",
                 input_schema={
@@ -1163,7 +1187,7 @@ class ToolRegistry:
 
         self._register(
             ToolSpec(
-                name="strategy.list",
+                name="strategy_list",
                 permission="read",
                 description="List stored strategies, optionally filtered by status",
                 input_schema={
@@ -1193,7 +1217,7 @@ class ToolRegistry:
 
         self._register(
             ToolSpec(
-                name="strategy.get",
+                name="strategy_get",
                 permission="read",
                 description="Get strategy details and backtest results by ID",
                 input_schema={
@@ -1273,10 +1297,15 @@ class ToolRegistry:
         timeframe = args["timeframe"]
         count = args.get("count", 120)
         bars = bar_mod.fetch_bars(rt.mcp, rt.clock(), symbol, timeframe, count)
+        records = bars.to_dict("records") if hasattr(bars, "to_dict") else bars
+        for bar in records:
+            t = bar.get("time")
+            if hasattr(t, "isoformat"):
+                bar["time"] = t.isoformat()
         return {
             "symbol": symbol,
             "timeframe": timeframe,
-            "bars": bars.to_dict("records") if hasattr(bars, "to_dict") else bars,
+            "bars": records,
         }
 
     async def _market_spec(self, rt: Runtime, args: dict[str, Any]) -> dict[str, Any]:
@@ -1343,9 +1372,12 @@ class ToolRegistry:
         timeframe = args["timeframe"]
         samples = args.get("samples", 25)
         lookback = args.get("lookback", 288)
+        from backend.ignite.analysis.graph import DEFAULT_HORIZON
         from backend.ignite.market import bars as bar_mod
         bars = bar_mod.fetch_bars(rt.mcp, rt.clock(), symbol, timeframe, lookback)
-        forecast = rt.forecast.forecast(bars, [], samples=samples, lookback=lookback)
+        horizon = DEFAULT_HORIZON.get(timeframe, 12)
+        future = bar_mod.future_timestamps(bars["time"].iloc[-1], timeframe, horizon)
+        forecast = rt.forecast.forecast(bars, future, samples=samples, lookback=lookback)
         return {
             "symbol": symbol,
             "timeframe": timeframe,

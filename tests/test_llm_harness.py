@@ -87,7 +87,7 @@ def test_harness_returns_final_text_when_no_tool_calls():
     harness = LLMHarness(
         rt,
         system_prompt="You are helpful.",
-        tool_specs=[_spec("market.quote")],
+        tool_specs=[_spec("market_quote")],
         execute=lambda name, args: {"ok": True},
     )
     result = harness.run([{"role": "user", "content": "hi"}])
@@ -103,7 +103,7 @@ def test_harness_returns_final_text_when_no_tool_calls():
 def test_harness_executes_tool_calls_and_feeds_results_back():
     rt = FakeRuntime()
     rt.llm = ScriptedLLM(
-        _tool_calls(ToolCall(id="call_1", name="market.quote", arguments={"symbol": "XAUUSD"})),
+        _tool_calls(ToolCall(id="call_1", name="market_quote", arguments={"symbol": "XAUUSD"})),
         _text("The quote is 3930.13."),
     )
     executed: list[tuple[str, dict[str, Any]]] = []
@@ -115,16 +115,16 @@ def test_harness_executes_tool_calls_and_feeds_results_back():
     harness = LLMHarness(
         rt,
         system_prompt="You are helpful.",
-        tool_specs=[_spec("market.quote")],
+        tool_specs=[_spec("market_quote")],
         execute=execute,
     )
     result = harness.run([{"role": "user", "content": "quote XAUUSD"}])
 
     assert result.text == "The quote is 3930.13."
     assert len(result.tool_calls) == 1
-    assert result.tool_calls[0]["name"] == "market.quote"
+    assert result.tool_calls[0]["name"] == "market_quote"
     assert result.tool_calls[0]["result"] == {"ok": True, "bid": 3930.0, "ask": 3930.13}
-    assert executed == [("market.quote", {"symbol": "XAUUSD"})]
+    assert executed == [("market_quote", {"symbol": "XAUUSD"})]
     assert result.exhausted is False
 
     # The tool result was fed back to the model in tool-message form.
@@ -137,15 +137,15 @@ def test_harness_executes_tool_calls_and_feeds_results_back():
 def test_harness_respects_max_steps_and_reports_exhausted():
     rt = FakeRuntime()
     rt.llm = ScriptedLLM(
-        _tool_calls(ToolCall(id="call_1", name="market.quote", arguments={"symbol": "XAUUSD"})),
-        _tool_calls(ToolCall(id="call_2", name="account.snapshot", arguments={})),
+        _tool_calls(ToolCall(id="call_1", name="market_quote", arguments={"symbol": "XAUUSD"})),
+        _tool_calls(ToolCall(id="call_2", name="account_snapshot", arguments={})),
     )
     # After 2 scripted responses, the model is called a 3rd time (final answer).
     # With max_steps=2 the loop runs both tool-call steps, then a final call.
     # The third ScriptedLLM result would be the final answer text.
     rt.llm = ScriptedLLM(
-        _tool_calls(ToolCall(id="call_1", name="market.quote", arguments={"symbol": "XAUUSD"})),
-        _tool_calls(ToolCall(id="call_2", name="account.snapshot", arguments={})),
+        _tool_calls(ToolCall(id="call_1", name="market_quote", arguments={"symbol": "XAUUSD"})),
+        _tool_calls(ToolCall(id="call_2", name="account_snapshot", arguments={})),
         _text("Best effort answer after tool budget."),
     )
 
@@ -155,7 +155,7 @@ def test_harness_respects_max_steps_and_reports_exhausted():
     harness = LLMHarness(
         rt,
         system_prompt="You are helpful.",
-        tool_specs=[_spec("market.quote"), _spec("account.snapshot")],
+        tool_specs=[_spec("market_quote"), _spec("account_snapshot")],
         execute=execute,
         max_steps=2,
     )
@@ -226,11 +226,11 @@ def test_harness_tool_specs_are_offered_to_model():
     harness = LLMHarness(
         rt,
         system_prompt="sys",
-        tool_specs=[_spec("market.quote"), _spec("account.snapshot")],
+        tool_specs=[_spec("market_quote"), _spec("account_snapshot")],
         execute=execute,
     )
     harness.run([{"role": "user", "content": "hi"}])
     tool_names = {
         t["function"]["name"] for t in rt.llm.requests[0]["tools"]
     }
-    assert {"market.quote", "account.snapshot"} <= tool_names
+    assert {"market_quote", "account_snapshot"} <= tool_names

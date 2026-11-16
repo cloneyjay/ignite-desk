@@ -23,7 +23,12 @@ from typing import Any
 from backend.ignite.agent.analyst import Analyst
 from backend.ignite.agent.execution_desk import ExecutionDesk
 from backend.ignite.agent.llm_harness import HarnessResult, LLMHarness
-from backend.ignite.agent.tools import ToolRegistry, ToolSpec, permission_allowed
+from backend.ignite.agent.tools import (
+    ToolRegistry,
+    ToolSpec,
+    permission_allowed,
+    _sanitize_for_json,
+)
 from backend.ignite.llm.client import LLMError, LLMUnavailable, ToolCall
 from backend.ignite.services.runtime import Runtime
 
@@ -171,7 +176,7 @@ class UnifiedChatAgent:
 
         tools.append(
             ToolSpec(
-                name="analyst.assess",
+                name="analyst_assess",
                 permission="prepare",
                 description="Run full multi-source market analysis: live quote, bars, structure, Kronos forecast, news → draft order with rationale",
                 input_schema={
@@ -205,7 +210,7 @@ class UnifiedChatAgent:
         if can_execute:
             tools.append(
                 ToolSpec(
-                    name="execution_desk.execute",
+                    name="execution_desk_execute",
                     permission="execute",
                     description="Execute a prepared draft order through guarded risk checks and the MT5 broker",
                     input_schema={
@@ -236,7 +241,7 @@ class UnifiedChatAgent:
 
         tools.append(
             ToolSpec(
-                name="web.search",
+                name="web_search",
                 permission="read",
                 description="Search the web for current market news, economic events, and price context",
                 input_schema={
@@ -281,9 +286,9 @@ class UnifiedChatAgent:
         name = tool_call.name
         args = tool_call.arguments or {}
 
-        if name == "analyst.assess":
+        if name == "analyst_assess":
             return self._handle_analyst_assess(self.rt, args)
-        if name == "execution_desk.execute":
+        if name == "execution_desk_execute":
             return self._handle_execution_desk_execute(self.rt, args)
 
         tool = self._registry.get(name)
@@ -300,6 +305,7 @@ class UnifiedChatAgent:
             if asyncio.iscoroutine(result):
                 result = asyncio.run(result)
             result = tool.validate_output(result)
+            result = _sanitize_for_json(result)
             return result
         except Exception as exc:  # noqa: BLE001
             return {"error": f"handler failed: {exc}"}

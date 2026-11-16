@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import datetime, timezone
 from typing import Literal
 
@@ -32,6 +32,12 @@ class AgentPosition:
     r_multiple: float | None
     managed_by_agent: int = 1
     last_managed_at: str | None = None
+    status: str = "open"
+
+    @classmethod
+    def from_record(cls, record: dict[str, object]) -> "AgentPosition":
+        names = {field.name for field in fields(cls)}
+        return cls(**{name: record[name] for name in names if name in record})
 
 
 @dataclass
@@ -57,7 +63,7 @@ class PositionManager:
         actions = []
         positions = self.rt.store.agent_positions()
         for pos_data in positions:
-            pos = AgentPosition(**pos_data)
+            pos = AgentPosition.from_record(pos_data)
             for action in self.manage_position(pos):
                 actions.append(action)
                 self._apply_action(action, pos)

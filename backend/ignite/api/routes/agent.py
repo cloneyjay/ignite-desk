@@ -16,11 +16,10 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
-from backend.ignite.agent.chat import ChatRoute, route_or_error
 from backend.ignite.agent.chat_agent import ChatResponse, UnifiedChatAgent
 from backend.ignite.agent.config import AgentConfig, AgentConfigPatch, ConfigError
-from backend.ignite.agent.desk_router import DeskRouter
 from backend.ignite.agent.runner import AgentError, AgentOutput, run_skill
+from backend.ignite.agent.tools import _sanitize_for_json
 from backend.ignite.api.deps import get_rt
 from backend.ignite.api.errors import ApiError
 from backend.ignite.services.runtime import Runtime
@@ -31,6 +30,7 @@ from backend.ignite.market.bars import fetch_bars
 from backend.ignite.market.structure import compute_structure
 from backend.ignite.services.execution import ExecutionError, execute_draft_autonomous
 from backend.ignite.store.db import utc_now
+
 
 router = APIRouter(prefix="/api", tags=["agent"])
 
@@ -368,7 +368,7 @@ def _chat_action(
             _record_tool(
                 rt,
                 decision_id or "",
-                "execution.close_position",
+                "execution_close_position",
                 status="failed",
                 symbol=position["symbol"],
                 preview=f"{result.code}: {result.detail}",
@@ -388,7 +388,7 @@ def _chat_action(
         _record_tool(
             rt,
             decision_id or "",
-            "execution.close_position",
+            "execution_close_position",
             symbol=position["symbol"],
             preview=f"close sent for {position['ticket']}",
         )
@@ -521,10 +521,22 @@ def _save_chat_message(
             "content": content,
             "status": status,
             "tool_name": tool.get("name") if tool else None,
-            "tool_args_json": json.dumps(tool.get("args")) if tool else None,
-            "tool_result_json": json.dumps(tool.get("result")) if tool else None,
+            "tool_args_json": (
+                json.dumps(_sanitize_for_json(tool.get("args")), default=str)
+                if tool
+                else None
+            ),
+            "tool_result_json": (
+                json.dumps(_sanitize_for_json(tool.get("result")), default=str)
+                if tool
+                else None
+            ),
             "latency_ms": tool.get("latency_ms") if tool else None,
-            "links_json": json.dumps(tool.get("links")) if tool else None,
+            "links_json": (
+                json.dumps(_sanitize_for_json(tool.get("links")), default=str)
+                if tool
+                else None
+            ),
         }
     )
 
@@ -616,7 +628,7 @@ def _chat_market_read(
         events = rt.news.calendar(now - timedelta(hours=2), now + timedelta(days=2))
         upcoming = [event for event in events if event.get("time")][:5]
         _record_tool(
-            rt, decision_id or "", "news.calendar", preview=f"{len(events)} event(s)"
+            rt, decision_id or "", "news_calendar", preview=f"{len(events)} event(s)"
         )
         if not upcoming:
             text = "I checked the economic calendar and found no dated events in the next two days."
@@ -652,7 +664,7 @@ def _chat_structure(
     _record_tool(
         rt,
         decision_id or "",
-        "market.structure",
+        "market_structure",
         symbol=symbol,
         preview=f"{structure['trend']} trend, ATR {structure['atr']:.2f}",
     )
@@ -756,14 +768,14 @@ def _fallback_deterministic(rt: Runtime, text: str) -> ChatResponse:
 
             tool_calls.append(
                 {
-                    "name": "market.structure",
+                    "name": "market_structure",
                     "arguments": {"symbol": symbol, "timeframe": "M15"},
                     "result": structure,
                 }
             )
             tool_calls.append(
                 {
-                    "name": "market.quote",
+                    "name": "market_quote",
                     "arguments": {"symbol": symbol},
                     "result": {"symbol": symbol, "bid": bid, "ask": ask, "spread_points": spread},
                 }
@@ -795,7 +807,7 @@ def _fallback_deterministic(rt: Runtime, text: str) -> ChatResponse:
         positions = rt.positions()
         tool_calls.append(
             {
-                "name": "account.positions",
+                "name": "account_positions",
                 "arguments": {},
                 "result": {"positions": positions},
             }
@@ -819,7 +831,7 @@ def _fallback_deterministic(rt: Runtime, text: str) -> ChatResponse:
         equity = float(account.get("equity") or 0.0)
         tool_calls.append(
             {
-                "name": "account.snapshot",
+                "name": "account_snapshot",
                 "arguments": {},
                 "result": {"equity": equity, "positions": len(positions)},
             }
@@ -849,20 +861,19 @@ def agent_chat(
     _save_chat_message(rt, session["id"], "user", text)
     decision_id = uuid.uuid4().hex
 
-    history = rt.store.agent_messages(session["id"])[-12:]
+    history = rt.store.agent_messages(session["id"])[-13:]
+    # The turn just saved is already in `history`; pass it separately.
+    if history and history[-1].get("role") == "user" and history[-1].get("content") == text:
+        history = history[:-1]
 
     try:
-        router = DeskRouter(rt)
-        response = router.route(text, history)
+        response = UnifiedChatAgent(rt).respond(session["id"], text, history)
     except Exception as exc:  # noqa: BLE001
-        fallback = _fallback_deterministic(rt, text)
-        response = ChatResponse(
-            narrative=fallback.narrative,
-            tool_calls=fallback.tool_calls,
-            structured=fallback.structured,
-        )
+        raise ApiError(
+            502, "agent_failed", f"the agent turn failed: {exc}"
+        ) from exc
 
-    # Save tool call messages
+    # Save tool call messages (the real trace of what the model asked for)
     for tool in response.tool_calls:
         tool["decision_id"] = decision_id
         _record_tool(
@@ -876,9 +887,12 @@ def agent_chat(
             rt,
             session["id"],
             "tool",
-            json.dumps(tool.get("result", "")),
+            json.dumps(_sanitize_for_json(tool.get("result", "")), default=str),
             tool=tool,
         )
+        # Sanitize results so FastAPI's JSON encoder never chokes on
+        # pandas Timestamps, numpy types, etc. leaking from tool handlers.
+        tool["result"] = _sanitize_for_json(tool.get("result", ""))
 
     # Save agent response
     _save_chat_message(
@@ -888,38 +902,31 @@ def agent_chat(
         response.narrative,
     )
 
+    kind = str(response.structured.get("kind") or "chat")
     output = {
         "run_id": decision_id,
-        "skill": "desk_router",
+        "skill": "llm_agent",
         "subject": None,
         "narrative": response.narrative,
-        "provider": "desk",
-        "model": None,
-        "status": "ok",
+        "provider": response.provider or "llm",
+        "model": response.model,
+        "status": "error" if kind in {"llm_unavailable", "llm_error"} else "ok",
         "fallback": False,
         "created_at": utc_now(),
         "latency_ms": 0,
         "cards": [],
-        "checks": {"ok": True},
+        "checks": {"ok": kind not in {"llm_unavailable", "llm_error"}},
         "structured": response.structured,
     }
 
-    return {
-        "route": {
-            "skill": response.route.intent,
-            "args": {
-                "symbol": response.route.symbol,
-                "timeframe": response.route.timeframe,
-                "ticket": response.route.ticket,
-                "action": response.route.action,
-            },
-            "confidence": response.route.confidence,
-        },
+    return _sanitize_for_json({
+        # Kept for API compatibility with older clients.
+        "route": {"skill": "llm_agent", "args": {}, "confidence": 1.0},
         "output": output,
         "session_id": session["id"],
         "decision_id": decision_id,
         "tool_calls": response.tool_calls,
-    }
+    })
 
 
 # =============================================================================

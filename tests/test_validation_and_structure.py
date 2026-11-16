@@ -1,23 +1,12 @@
+﻿"""Tests for market structure, forecast validation, and the daily brief."""
+
 from __future__ import annotations
 
 import pandas as pd
 
-from backend.ignite.agent.chat import route_chat
 from backend.ignite.agent.skills.daily_brief import template_narrative
-from backend.ignite.analysis.features import compute
 from backend.ignite.analysis.signal import Signal, validate_against_desk
 from backend.ignite.market.structure import compute_structure
-
-
-def test_chat_routes_manual_desk_controls():
-    assert route_chat("turn autonomous on").args == {"enabled": True}
-    assert route_chat("close position 152900990451").args == {"ticket": "152900990451"}
-    assert route_chat("add EURUSD to watchlist").skill == "add_symbol"
-    assert route_chat("show calendar").skill == "calendar"
-    assert route_chat("what is the open trade in MT5").skill == "positions"
-    structure = route_chat("pull the current structure of XAUUSD on M15")
-    assert structure.skill == "market_structure"
-    assert structure.args == {"symbol": "XAUUSD", "timeframe": "M15"}
 
 
 def test_structure_reading_contains_levels_and_vwap():

@@ -12,7 +12,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from backend.ignite.market.bars import fetch_bars
+from backend.ignite.analysis.graph import DEFAULT_HORIZON
+from backend.ignite.market.bars import fetch_bars, future_timestamps
 from backend.ignite.market.structure import compute_structure
 from backend.ignite.services.analysis_service import start_analysis
 from backend.ignite.services.runtime import Runtime
@@ -63,8 +64,10 @@ class Analyst:
         # --- Kronos forecast ---
         lookback = 288
         bars = fetch_bars(self.rt.mcp, self.rt.clock(), symbol, timeframe, lookback)
+        horizon = DEFAULT_HORIZON.get(timeframe, 12)
+        future = future_timestamps(bars["time"].iloc[-1], timeframe, horizon)
         forecast_result = self.rt.forecast.forecast(
-            bars, [], samples=25, lookback=lookback
+            bars, future, samples=25, lookback=lookback
         )
 
         # --- memory ---

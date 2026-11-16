@@ -13,6 +13,7 @@ data/
 *.sqlite
 *.sqlite3
 logs/
+*.log
 spikes/**/out/
 spikes/**/*.jsonl
 
@@ -42,3 +43,5 @@ founders/
 
 # Agent workspace scratch
 .superpowers/
+Agents.md
+PONY*

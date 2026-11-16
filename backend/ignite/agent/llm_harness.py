@@ -22,7 +22,7 @@ from backend.ignite.llm.client import LLMResult, ToolCall
 from backend.ignite.services.runtime import Runtime
 
 MAX_TOOL_STEPS = 10
-TURN_DEADLINE_S = 90.0
+TURN_DEADLINE_S = 180.0
 
 
 @dataclass(frozen=True)

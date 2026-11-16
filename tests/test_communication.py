@@ -62,7 +62,7 @@ class FakeLLMClient(LLMClient):
                 tool_calls=[
                     ToolCall(
                         id="call_1",
-                        name="market.intel",
+                        name="market_intel",
                         arguments={"symbol": "XAUUSD"}
                     )
                 ],

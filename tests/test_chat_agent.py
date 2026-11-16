@@ -52,7 +52,7 @@ def test_unified_chat_agent_detects_analysis_intent(rt):
     assert response.structured.get("signal") in {"LONG", "SHORT", "NONE"}
     assert isinstance(response.structured.get("rationale"), str)
     assert len(response.tool_calls) > 0
-    assert response.tool_calls[0]["name"] == "analyst.assess"
+    assert response.tool_calls[0]["name"] == "analyst_assess"
 
 
 def test_unified_chat_agent_detects_outlook_intent(rt):
@@ -90,14 +90,14 @@ def test_unified_chat_agent_web_search_tool_available(rt):
     """The web.search tool is registered and available."""
     agent = UnifiedChatAgent(rt)
     tool_names = [t.name for t in agent._get_tools()]
-    assert "web.search" in tool_names
+    assert "web_search" in tool_names
 
 
 def test_web_search_executes(rt):
     """web.search tool handler returns results or a configuration message."""
     agent = UnifiedChatAgent(rt)
     tools = {t.name: t for t in agent._get_tools()}
-    tool = tools.get("web.search")
+    tool = tools.get("web_search")
     assert tool is not None
 
     result = tool.handler(rt, {"query": "XAUUSD gold price outlook"})

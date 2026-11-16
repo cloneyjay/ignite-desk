@@ -1,0 +1,48 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
+# Runtime data
+data/
+*.db
+*.sqlite
+*.sqlite3
+logs/
+spikes/**/out/
+spikes/**/*.jsonl
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.shots/
+
+# Model cache
+models/
+.cache/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Private notes
+founders/
+
+# Agent scratch
+.superpowers/
+
+# Git
+.git/
+.gitmodules

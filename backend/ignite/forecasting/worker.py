@@ -162,7 +162,7 @@ async def forecast(req: ForecastRequest) -> ForecastResponse:
 def main() -> None:
     uvicorn.run(
         "backend.ignite.forecasting.worker:app",
-        host="127.0.0.1",
+        host=os.getenv("KRONOS_BIND_HOST", "127.0.0.1"),
         port=8765,
         log_level="info",
     )

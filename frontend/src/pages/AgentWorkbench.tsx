@@ -268,7 +268,7 @@ function MessageBubble({
   return (
     <article className={`w-fit max-w-[88%] rounded-xl border px-4 py-3 ${user ? "ml-auto border-gold-500/25 bg-gold-500/[0.08]" : "border-line/70 bg-ink-850/70"}`}>
       <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-fog">{user ? "You" : "Agent"}</div>
-      <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-paper/90">{message.content}</p>
+      <div className="text-[12px] leading-relaxed text-paper/90">{renderMarkdown(message.content)}</div>
     </article>
   );
 }
@@ -315,7 +315,7 @@ function AnalysisBubble({
         <Badge tone="neutral">p_up {result.p_up.toFixed(2)}</Badge>{" "}
         <Badge tone={result.edge_atr >= 0 ? "long" : "short"}>edge {result.edge_atr >= 0 ? "+" : ""}{result.edge_atr.toFixed(2)} ATR</Badge>
       </div>
-      <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-paper/90 mb-3">{result.rationale}</p>
+      <div className="text-[12px] leading-relaxed text-paper/90 mb-3">{renderMarkdown(result.rationale)}</div>
       {hasDraft && (
         <div className="rounded-lg border border-line/60 bg-ink-900/60 p-3 mb-3">
           <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-fog mb-2">Draft order</div>
@@ -405,5 +405,142 @@ function RightRail() {
       {tab === "tools" && <Panel title="Tools"><div className="text-[12px] text-fog">No tool calls yet.</div></Panel>}
       {tab === "memory" && <Panel title="Memory"><div className="text-[12px] text-fog">Memory view.</div></Panel>}
     </div>
+  );
+}
+
+function escapeText(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// Inline markdown (**bold**, *italic*, `code`, [link](url)) -> React nodes.
+function inlineNodes(text: string): React.ReactNode {
+  const tokenRe = /(\*\*[^*\n]+?\*\*|\*[^*\n]+?\*|`[^`\n]+?`|\[[^\]]+\]\([^)]+\))/g;
+  const nodes: React.ReactNode[] = [];
+  let lastIndex = 0;
+  text.replace(tokenRe, (match, offset) => {
+    const before = text.slice(lastIndex, offset);
+    if (before) nodes.push(escapeText(before));
+    lastIndex = offset + match.length;
+    let node: React.ReactNode;
+    if (match.startsWith("**") && match.endsWith("**") && match.length > 4) {
+      node = <strong key={`${offset}-b`}>{inlineNodes(match.slice(2, -2))}</strong>;
+    } else if (match.startsWith("*") && match.endsWith("*") && match.length > 2) {
+      node = <em key={`${offset}-i`}>{inlineNodes(match.slice(1, -1))}</em>;
+    } else if (match.startsWith("`") && match.endsWith("`") && match.length > 2) {
+      node = (
+        <code key={`${offset}-c`} className="font-mono text-[11px] text-paper/80">
+          {match.slice(1, -1)}
+        </code>
+      );
+    } else {
+      const m = match.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+      node = m ? (
+        <a
+          key={`${offset}-l`}
+          href={m[2]}
+          className="text-gold-400 underline underline-offset-4 hover:text-gold-300"
+        >
+          {m[1]}
+        </a>
+      ) : (
+        escapeText(match)
+      );
+    }
+    nodes.push(node);
+    return match;
+  });
+  const rest = text.slice(lastIndex);
+  if (rest) nodes.push(escapeText(rest));
+  return nodes;
+}
+
+// A single markdown table: rows are "| cell | cell |" lines, second row may be a separator.
+function TableBlock({ rows }: { rows: string[] }): React.ReactNode {
+  const cells = rows.map((r) =>
+    r
+      .split("|")
+      .map((c) => c.trim())
+      .filter((c) => c.length > 0)
+  );
+  let headerIdx = 0;
+  let startRow = 1;
+  if (cells.length > 1 && cells[1].every((c) => /^:?-+:?$/.test(c))) {
+    headerIdx = 0;
+    startRow = 2;
+  }
+  return (
+    <div className="overflow-x-auto mt-1 mb-1">
+      <table className="border-collapse border border-line/50 text-[11px]">
+        <thead>
+          <tr>
+            {cells[headerIdx].map((c, j) => (
+              <th
+                key={j}
+                className="border border-line/50 bg-ink-900/50 px-2 py-1 text-left font-semibold text-paper"
+              >
+                {inlineNodes(c)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {cells.slice(startRow).map((row, ri) => (
+            <tr key={ri}>
+              {row.map((c, ci) => (
+                <td key={ci} className="border border-line/50 px-2 py-1 text-paper/90">
+                  {inlineNodes(c)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// Render full markdown (headers, tables, lists, inline formatting) -> React nodes.
+function renderMarkdown(text: string): React.ReactNode {
+  const blocks = text.split(/\n\n+/).filter((b) => b.trim().length > 0);
+  return (
+    <>
+      {blocks.map((block, i) => {
+        const trimmed = block.trim();
+        if (!trimmed) return null;
+        const h = trimmed.match(/^(#{1,3})\s+(.*)$/);
+        if (h) {
+          const Tag: "h1" | "h2" | "h3" =
+            h[1].length === 1 ? "h1" : h[1].length === 2 ? "h2" : "h3";
+          return (
+            <Tag
+              key={i}
+              className="font-semibold text-paper mt-2 mb-1 tracking-tight"
+            >
+              {inlineNodes(h[2])}
+            </Tag>
+          );
+        }
+        const lines = trimmed.split("\n");
+        if (lines.some((l) => l.includes("|"))) {
+          return <TableBlock key={i} rows={lines} />;
+        }
+        if (lines.every((l) => /^[-*]\s/.test(l) || l.trim() === "")) {
+          return (
+            <ul key={i} className="list-disc pl-5 mt-1 mb-1 text-paper/90">
+              {lines
+                .filter((l) => l.trim())
+                .map((l, j) => (
+                  <li key={j}>{inlineNodes(l.replace(/^[-*]\s+/, ""))}</li>
+                ))}
+            </ul>
+          );
+        }
+        return (
+          <p key={i} className="mt-1 mb-1">
+            {inlineNodes(trimmed)}
+          </p>
+        );
+      })}
+    </>
   );
 }
