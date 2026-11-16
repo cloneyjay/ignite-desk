@@ -10,9 +10,11 @@ produces:
 - ``compact_feedback`` — a short string for the LLM's context pack
   (recent decisions with outcomes, per the PRD: "compact feedback, not
   raw history"), plus the cached daily baseline comparison.
-
-Promotion thresholds are a later increment of Goal 5; this file
-deliberately does not gate promotion on any number yet.
+- ``promotion_eligibility`` — measures the desk against the pre-committed
+  promotion thresholds (``PROMOTION_THRESHOLDS_V1``). The numbers were fixed
+  BEFORE any evaluation ran (PRD Goal 5: never tune thresholds after seeing
+  results); promotion stays operator-confirmed, but the evidence gate is
+  enforced in code.
 """
 
 from __future__ import annotations
@@ -22,6 +24,103 @@ import json
 from typing import Any
 
 from backend.ignite.services.runtime import Runtime
+
+# Goal 5 "earned autonomy": the promotion evidence bar, committed in code
+# before this desk had any measured results to tune against. Changing these
+# numbers later is threshold-tuning and must be treated as a PRD violation —
+# the harness fingerprint reset and the audit trail exist to expose it.
+PROMOTION_THRESHOLDS_V1: dict[str, Any] = {
+    "version": "promotion.v1",
+    "min_closed_trades": 30,  # enough closed trades for the stats to mean anything
+    "min_sum_r": 0.0,  # strictly positive — must beat the no-trade baseline
+    "min_avg_r": 0.0,  # positive expectancy per trade
+    "min_win_rate": 0.40,
+    "max_drawdown_r": 8.0,  # peak-to-trough on cumulative R
+}
+
+
+def max_drawdown_r(rs_chronological: list[float]) -> float:
+    """Peak-to-trough drawdown on the cumulative R curve (starts at 0)."""
+    peak = 0.0
+    cum = 0.0
+    dd = 0.0
+    for r in rs_chronological:
+        cum += r
+        peak = max(peak, cum)
+        dd = max(dd, peak - cum)
+    return dd
+
+
+def promotion_eligibility(
+    rows: list[dict[str, Any]], current_mode: str
+) -> dict[str, Any]:
+    """Measure the desk against PROMOTION_THRESHOLDS_V1 (pure function).
+
+    ``rows`` are ``agent_position_outcomes`` rows. The ladder step
+    shadow→demo→live is computed from ``current_mode``; the report is shown
+    to the operator and enforced by ``Runtime.promote_mode``.
+    """
+    closed = [
+        r for r in rows if r.get("executed") and r.get("r_multiple") is not None
+    ]
+    closed_chrono = sorted(closed, key=lambda r: str(r.get("closed_at") or ""))
+    rs = [float(r["r_multiple"]) for r in closed_chrono]
+    stats = summarize_outcomes(rows)
+
+    measured = {
+        "closed_trades": len(closed),
+        "sum_r": round(stats["sum_r"], 4),
+        "avg_r": round(stats["avg_r"], 4) if stats["avg_r"] is not None else None,
+        "win_rate": round(stats["win_rate"], 4) if stats["win_rate"] is not None else None,
+        "max_drawdown_r": round(max_drawdown_r(rs), 4),
+    }
+    t = PROMOTION_THRESHOLDS_V1
+    win_rate = measured["win_rate"]
+    checks = [
+        {
+            "criterion": "min_closed_trades",
+            "threshold": t["min_closed_trades"],
+            "measured": measured["closed_trades"],
+            "met": measured["closed_trades"] >= t["min_closed_trades"],
+        },
+        {
+            "criterion": "min_sum_r",
+            "threshold": f"> {t['min_sum_r']}",
+            "measured": measured["sum_r"],
+            "met": measured["sum_r"] > t["min_sum_r"],
+        },
+        {
+            "criterion": "min_avg_r",
+            "threshold": f"> {t['min_avg_r']}",
+            "measured": measured["avg_r"],
+            "met": measured["avg_r"] is not None and measured["avg_r"] > t["min_avg_r"],
+        },
+        {
+            "criterion": "min_win_rate",
+            "threshold": f">= {t['min_win_rate']}",
+            "measured": win_rate,
+            "met": win_rate is not None and win_rate >= t["min_win_rate"],
+        },
+        {
+            "criterion": "max_drawdown_r",
+            "threshold": f"<= {t['max_drawdown_r']}",
+            "measured": measured["max_drawdown_r"],
+            "met": measured["max_drawdown_r"] <= t["max_drawdown_r"],
+        },
+    ]
+    ladder = ("shadow", "demo", "live")
+    target = None
+    if current_mode in ladder and ladder.index(current_mode) < len(ladder) - 1:
+        target = ladder[ladder.index(current_mode) + 1]
+    return {
+        "thresholds_version": t["version"],
+        "thresholds": t,
+        "measured": measured,
+        "checks": checks,
+        "eligible": all(c["met"] for c in checks) and target is not None,
+        "target_mode": target,
+        "current_mode": current_mode,
+    }
 
 
 def summarize_outcomes(rows: list[dict[str, Any]]) -> dict[str, Any]:

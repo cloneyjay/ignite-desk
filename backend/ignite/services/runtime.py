@@ -326,6 +326,29 @@ class Runtime:
         else:
             return {"ok": False, "error": f"invalid promotion from {current} to {target}"}
 
+        # Goal 5 "earned autonomy": promotion requires measured evidence that
+        # meets the pre-committed thresholds (PROMOTION_THRESHOLDS_V1). The
+        # operator confirms, but the numbers gate — fail closed without them.
+        from backend.ignite.agent.evaluation import promotion_eligibility
+
+        eligibility = promotion_eligibility(
+            self.store.agent_position_outcomes(limit=500), current
+        )
+        if not eligibility["eligible"]:
+            unmet = [c["criterion"] for c in eligibility["checks"] if not c["met"]]
+            self.store.audit(
+                "api",
+                "mode_promotion_blocked",
+                {"from": current, "to": target, "unmet": unmet},
+                "insufficient_evidence",
+            )
+            return {
+                "ok": False,
+                "error": "promotion thresholds not met",
+                "unmet": unmet,
+                "eligibility": eligibility,
+            }
+
         # Update config
         new_config = self.config_service.update({"execution_mode": target})
 

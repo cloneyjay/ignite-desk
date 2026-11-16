@@ -1234,6 +1234,20 @@ def agent_config_put(body: AgentConfigPatch, rt: Runtime = Depends(get_rt)) -> d
     return config.__dict__
 
 
+@router.get("/agent/evaluation/promotion")
+def agent_promotion_eligibility(rt: Runtime = Depends(get_rt)) -> dict[str, Any]:
+    """Goal 5 earned autonomy: desk measured against pre-set promotion thresholds.
+
+    Read-only report; ``POST /api/mode/promote`` enforces the same gate.
+    """
+    from backend.ignite.agent.evaluation import promotion_eligibility
+
+    return promotion_eligibility(
+        rt.store.agent_position_outcomes(limit=500),
+        rt.config().execution_mode,
+    )
+
+
 def _skill_subject(rt: Runtime, skill: str, **kwargs) -> str:
     if skill == "analysis_narrative":
         analysis_id = kwargs.get("analysis_id")
