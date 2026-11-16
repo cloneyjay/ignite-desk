@@ -724,3 +724,69 @@ export interface StrategyDemoteResponse {
   from: string;
   to: string;
 }
+
+export interface BaselineStats {
+  sum_r: number;
+  avg_r?: number | null;
+  win_rate?: number | null;
+  max_drawdown?: number | null;
+  est_usd?: number;
+  trades?: number;
+  avg_win_r?: number | null;
+  avg_loss_r?: number | null;
+  wins?: number;
+  losses?: number;
+  closed?: number;
+  [key: string]: unknown;
+}
+
+export interface BaselineReport {
+  symbol: string;
+  timeframe: string;
+  window: { since: string; until: string };
+  assumptions: {
+    sl_atr: number;
+    tp_atr: number;
+    spread: string;
+    slippage_points: number;
+    swap_points_per_night: number;
+    same_bar_rule: string;
+    risk_usd_per_r: number;
+    random_seed: number;
+  };
+  agent: BaselineStats & { source?: string };
+  no_trade: { sum_r: number; est_usd: number; note: string };
+  kronos: BaselineStats & { forecasts?: number };
+  random: BaselineStats & { n_trades?: number; seed?: number };
+  disclaimer: string;
+}
+
+export interface PromotionCheck {
+  criterion: string;
+  threshold: string | number;
+  measured: unknown;
+  met: boolean;
+}
+
+export interface PromotionEligibility {
+  thresholds_version: string;
+  thresholds: {
+    version: string;
+    min_closed_trades: number;
+    min_sum_r: number;
+    min_avg_r: number;
+    min_win_rate: number;
+    max_drawdown_r: number;
+  };
+  measured: {
+    closed_trades: number;
+    sum_r: number;
+    avg_r: number | null;
+    win_rate: number | null;
+    max_drawdown_r: number;
+  };
+  checks: PromotionCheck[];
+  eligible: boolean;
+  target_mode: string | null;
+  current_mode: string;
+}

@@ -15,6 +15,7 @@ import { dateTime, money, percent, signedMoney } from "../lib/format";
 import { Badge, Button, Panel, Row } from "../components/ui";
 import { BoltIcon, PlusIcon } from "../components/icons";
 import { ToolRow } from "../components/ToolRow";
+import EvaluationPanel from "../components/EvaluationPanel";
 
 const QUICK_PROMPTS = [
   "What are you watching?",
@@ -404,6 +405,7 @@ function RightRail() {
       )}
       {tab === "tools" && <Panel title="Tools"><div className="text-[12px] text-fog">No tool calls yet.</div></Panel>}
       {tab === "memory" && <Panel title="Memory"><div className="text-[12px] text-fog">Memory view.</div></Panel>}
+      <EvaluationPanel />
     </div>
   );
 }

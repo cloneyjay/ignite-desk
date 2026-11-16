@@ -13,6 +13,8 @@ import type {
   Analysis,
   BarsPayload,
   Blackout,
+  BaselineReport,
+  PromotionEligibility,
   CalendarEvent,
   ConfirmResult,
   DraftDetail,
@@ -261,4 +263,8 @@ export const api = {
         body: JSON.stringify({ confirm }),
       }
     ),
+  agentBaselineReport: (symbol: string, lookbackDays: number) =>
+    request<BaselineReport>(`/agent/evaluation/baseline${query({ symbol, lookback_days: lookbackDays })}`),
+  agentPromotionEligibility: () =>
+    request<PromotionEligibility>("/agent/evaluation/promotion"),
 };
