@@ -3,6 +3,18 @@
 The agent authors the trade. This gateway validates the broker and desk
 contract, sends the order, binds the fill to the returned ticket, and proves
 the position is protected. It rejects; it never rewrites the agent's size.
+
+Two write paths, nothing else (PRD Invariant #3):
+
+- Entries: draft/guard chain -> ``place`` (``execute_draft_autonomous`` or the
+  confirm->token->``execute_draft`` handshake).
+- Position management (SL/TP modify, close — always risk-reducing):
+  ``modify`` / ``close`` directly. These must NOT go through the entry draft
+  path: news blackout, margin and drift guards are entry checks, and the kill
+  switch must always allow closes (PRD Invariant #1/#5).
+
+Agent and engine code must never call ``broker`` MCP write tools directly —
+every write goes through this gateway so the guards and audit apply.
 """
 
 from __future__ import annotations

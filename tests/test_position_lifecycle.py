@@ -4,8 +4,81 @@ from __future__ import annotations
 
 import pytest
 
-from backend.ignite.agent.position_manager import PositionManager, AgentPosition
+from backend.ignite.agent.position_manager import (
+    PositionManager,
+    AgentPosition,
+    PositionAction,
+)
 from backend.ignite.services.reconciliation import ReconciliationService
+
+
+def _agent_position(ticket="12345", sl=3920.0, tp=3950.0, side="BUY"):
+    return AgentPosition(
+        ticket=ticket, symbol="XAUUSD", side=side, entry_price=3930.0,
+        volume=0.01, sl=sl, tp=tp, trail_sl=None, scale_in_count=0,
+        scale_out_count=0, max_favourable_atr=None, max_adverse_atr=None,
+        opened_at="2026-01-01T00:00:00Z", closed_at=None, close_reason=None,
+        realised_pnl=None, r_multiple=None,
+    )
+
+
+def test_apply_action_trail_sl_routes_through_gateway(rt):
+    """PRD Invariant #3: position management goes through the gateway, never
+    directly to broker MCP tools."""
+    from tests.test_gateway_scale import _add_position
+
+    _add_position(rt, ticket="12345", sl=3920.0)
+    mgr = PositionManager(rt, rt.config())
+
+    mgr._apply_action(
+        PositionAction(type="TRAIL_SL", ticket="12345", new_sl=3925.0),
+        _agent_position(),
+    )
+
+    calls = rt.mcp.called("trade_modify_sl_tp")
+    assert calls and calls[-1]["sl"] == 3925.0
+    assert calls[-1]["position_ticket"] == "12345"
+    audits = rt.store.get_audit_log(limit=5)
+    assert any(a["action"] == "position_trail_sl" and a["result"] == "ok" for a in audits)
+
+
+def test_apply_action_close_routes_through_gateway(rt):
+    from tests.test_gateway_scale import _add_position
+
+    _add_position(rt, ticket="12345")
+    rt.store.upsert_agent_position(_create_position_dict(ticket="12345"))
+    mgr = PositionManager(rt, rt.config())
+
+    mgr._apply_action(
+        PositionAction(type="CLOSE", ticket="12345", reason="SESSION_END"),
+        _agent_position(),
+    )
+
+    calls = rt.mcp.called("trade_close_single_position")
+    assert calls and calls[-1]["position_ticket"] == "12345"
+    assert rt.store.agent_position("12345")["status"] == "closed"
+    audits = rt.store.get_audit_log(limit=5)
+    assert any(a["action"] == "position_close" and a["result"] == "ok" for a in audits)
+
+
+def test_apply_action_modify_blocked_by_kill_switch_guard(rt):
+    """The gateway kill-switch guard (no risk-widening) now applies to the
+    position manager too — it was bypassed when broker tools were called directly."""
+    from tests.test_gateway_scale import _add_position
+
+    _add_position(rt, ticket="12345", side="buy", sl=3920.0)
+    rt.set_kill_switch(True)
+    mgr = PositionManager(rt, rt.config())
+
+    # Widening the SL on a BUY (lowering it) increases risk -> gateway rejects
+    mgr._apply_action(
+        PositionAction(type="TRAIL_SL", ticket="12345", new_sl=3910.0),
+        _agent_position(sl=3920.0),
+    )
+
+    audits = rt.store.get_audit_log(limit=5)
+    failed = [a for a in audits if a["action"] == "position_trail_sl_failed"]
+    assert failed and "KILL_SWITCH" in failed[0]["result"]
 
 
 def _create_position_dict(ticket="12345", symbol="XAUUSD", side="BUY", entry=3930.0, volume=0.01, sl=3920.0, tp=3950.0, status="open"):

@@ -106,21 +106,30 @@ class PositionManager:
                 )
 
     def _apply_action(self, action: "PositionAction", pos: "AgentPosition") -> None:
-        from backend.ignite.services.broker import close_position, modify_position_sl_tp
+        """Send the action through the gateway — the only management write path.
 
+        PRD Invariant #3: agent code never calls broker MCP tools directly.
+        The gateway guards (position resolution, kill-switch risk-reduction
+        check, execution lock, audit event) apply to management actions too.
+        The gateway acquires the execution lock itself; do not nest it here.
+        """
         try:
-            with self.rt.execution_lock:
-                if action.type == "TRAIL_SL":
-                    modify_position_sl_tp(
-                        self.rt.mcp, pos.symbol, action.ticket, action.new_sl, pos.tp
-                    )
-                elif action.type == "CLOSE":
-                    close_position(self.rt.mcp, pos.symbol, action.ticket)
-                    self.rt.store.close_agent_position(
-                        action.ticket, action.reason or "AGENT_EXIT", 0.0, 0.0
-                    )
-                elif action.type == "SCALE_OUT":
-                    raise RuntimeError("MT5 MCP close tool does not support partial volume")
+            if action.type == "TRAIL_SL":
+                result = self.rt.gateway.modify(action.ticket, action.new_sl, pos.tp)
+            elif action.type == "CLOSE":
+                result = self.rt.gateway.close(
+                    action.ticket, action.reason or "AGENT_EXIT"
+                )
+            elif action.type == "SCALE_OUT":
+                raise RuntimeError("MT5 MCP close tool does not support partial volume")
+            else:
+                raise RuntimeError(f"unsupported position action {action.type}")
+            if not result.ok:
+                raise RuntimeError(f"{result.code}: {result.detail}")
+            if action.type == "CLOSE":
+                self.rt.store.close_agent_position(
+                    action.ticket, action.reason or "AGENT_EXIT", 0.0, 0.0
+                )
             self.rt.store.audit(
                 "agent",
                 f"position_{action.type.lower()}",
