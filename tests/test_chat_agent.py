@@ -11,6 +11,36 @@ def test_unified_chat_agent_exists():
     assert ChatResponse is not None
 
 
+def test_chat_agent_execute_tool_fails_closed_when_execute_not_allowed(rt):
+    """PRD Invariant #4: execution-time re-check of the permission gate.
+
+    The rt fixture runs in autonomous + live, but autonomy level 0 < 2, so
+    execute tools are gated out. A model that names execution_desk_execute
+    anyway must get a refusal, not an execution.
+    """
+    from backend.ignite.llm.client import ToolCall
+
+    agent = UnifiedChatAgent(rt)
+    agent._get_tools()  # snapshot the session tool map
+
+    result = agent._execute_tool(
+        ToolCall(id="tc_1", name="execution_desk_execute", arguments={"draft_id": "d1"})
+    )
+    assert "not allowed" in result["error"]
+
+    # A tool that is registered but gated out of the visible list is also refused
+    result = agent._execute_tool(
+        ToolCall(id="tc_2", name="execution_place_order", arguments={"draft_id": "d1"})
+    )
+    assert "not allowed" in result["error"]
+
+    # Unknown tool still reports unknown
+    result = agent._execute_tool(
+        ToolCall(id="tc_3", name="no_such_tool", arguments={})
+    )
+    assert "unknown tool" in result["error"]
+
+
 def test_unified_chat_agent_responds(rt):
     """UnifiedChatAgent.respond returns a ChatResponse with narrative."""
     from unittest.mock import MagicMock

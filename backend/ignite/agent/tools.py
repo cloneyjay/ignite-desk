@@ -1249,6 +1249,23 @@ class ToolRegistry:
         """Return one tool by name, or None if it is not registered."""
         return self._tools.get(name)
 
+    def get_allowed(
+        self, name: str, mode: str, kill_switch: bool, autonomy_level: int = 0
+    ) -> ToolSpec | None:
+        """Return the tool by name if its permission is allowed right now.
+
+        Fail closed (PRD Invariant #4): an unregistered tool, or one whose
+        permission the current mode/kill-switch/autonomy does not allow,
+        returns None. Every execution-time lookup must use this, not
+        ``get`` — visibility gating alone is not a permission gate.
+        """
+        spec = self._tools.get(name)
+        if spec is None:
+            return None
+        if not permission_allowed(spec.permission, mode, kill_switch, autonomy_level):
+            return None
+        return spec
+
     def get_available(self, mode: str, kill_switch: bool, autonomy_level: int = 0) -> list[ToolSpec]:
         """Return tools available for the given mode, kill switch state, and autonomy level."""
         return [

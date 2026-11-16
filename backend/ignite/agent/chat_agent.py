@@ -38,6 +38,9 @@ UNREACHABLE_NARRATIVE = (
     "provider configuration (or the backup provider) and try again."
 )
 
+# Custom (non-registry) tools the chat agent offers the model.
+_CUSTOM_TOOL_NAMES = {"analyst_assess", "execution_desk_execute", "web_search"}
+
 
 @dataclass(frozen=True)
 class ChatResponse:
@@ -112,6 +115,9 @@ class UnifiedChatAgent:
     def __init__(self, rt: Runtime) -> None:
         self.rt = rt
         self._registry = ToolRegistry()
+        # Tool specs offered in the current turn; execution re-checks their
+        # permission against live mode/kill-switch/autonomy (fail closed).
+        self._session_tools: dict[str, ToolSpec] = {}
 
     def respond(
         self, session_id: str, text: str, history: list[dict[str, Any]]
@@ -278,33 +284,53 @@ class UnifiedChatAgent:
             )
         )
 
+        self._session_tools = {spec.name: spec for spec in tools}
         return tools
 
     def _execute_tool(self, tool_call: ToolCall) -> dict[str, Any]:
         """Execute one tool call, routing custom tools to Analyst/ExecutionDesk,
-        everything else to the MCP ToolRegistry."""
+        everything else to the MCP ToolRegistry.
+
+        Fail closed (PRD Invariant #4): every call — custom or registry — is
+        re-checked against ``permission_allowed`` for the *current* mode,
+        kill-switch and autonomy state. Visibility filtering alone is not a
+        permission gate.
+        """
         name = tool_call.name
         args = tool_call.arguments or {}
+
+        spec = self._session_tools.get(name)
+        if spec is None:
+            if (
+                self._registry.get(name) is not None
+                or name in _CUSTOM_TOOL_NAMES
+            ):
+                return {"error": "tool not allowed in current mode"}
+            return {"error": f"unknown tool: {name}"}
+        if not permission_allowed(
+            spec.permission,
+            self.rt.config().operating_mode,
+            self.rt.kill_switch(),
+            self.rt.config().autonomy_level,
+        ):
+            return {"error": "tool not allowed in current mode"}
 
         if name == "analyst_assess":
             return self._handle_analyst_assess(self.rt, args)
         if name == "execution_desk_execute":
             return self._handle_execution_desk_execute(self.rt, args)
 
-        tool = self._registry.get(name)
-        if tool is None:
-            return {"error": f"unknown tool: {name}"}
         try:
-            validated = tool.validate_input(args)
+            validated = spec.validate_input(args)
         except Exception as exc:  # noqa: BLE001
             return {"error": f"invalid arguments: {exc}"}
         try:
-            result = tool.handler(self.rt, validated)
+            result = spec.handler(self.rt, validated)
             import asyncio
 
             if asyncio.iscoroutine(result):
                 result = asyncio.run(result)
-            result = tool.validate_output(result)
+            result = spec.validate_output(result)
             result = _sanitize_for_json(result)
             return result
         except Exception as exc:  # noqa: BLE001

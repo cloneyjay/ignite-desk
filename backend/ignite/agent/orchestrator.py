@@ -139,10 +139,25 @@ class Orchestrator:
     def _execute_tool(
         self, name: str, args: dict[str, Any], decision_id: str
     ) -> dict[str, Any]:
-        """Execute a single tool call via the registry and record the event."""
-        tool = self.rt.tool_registry.get(name)
+        """Execute a single tool call via the registry and record the event.
+
+        Fail closed (PRD Invariant #4): the tool must be registered AND its
+        permission must be allowed for the current mode/kill-switch/autonomy
+        — visibility filtering alone is not a permission gate.
+        """
+        tool = self.rt.tool_registry.get_allowed(
+            name,
+            self.rt.config().operating_mode,
+            self.rt.kill_switch(),
+            self.rt.config().autonomy_level,
+        )
         if tool is None:
-            result = {"error": f"unknown tool: {name}"}
+            registered = self.rt.tool_registry.get(name) is not None
+            result = {
+                "error": (
+                    "tool not allowed in current mode" if registered else f"unknown tool: {name}"
+                )
+            }
             self._record_tool_event(
                 decision_id, name, args, result, status="error"
             )
