@@ -304,33 +304,25 @@ function AnalysisBubble({
 
   return (
     <article className="w-fit max-w-[88%] rounded-xl border px-4 py-3 border-line/70 bg-ink-850/70">
-      <div className="mb-3">
-        <Badge tone={tone}>{side}</Badge>{" "}
-        <Badge tone="neutral">{result.timeframe}</Badge>{" "}
-        <Badge tone="neutral">p_up {result.p_up.toFixed(2)}</Badge>{" "}
+      <div className="mb-2 flex flex-wrap items-center gap-1.5">
+        <Badge tone={tone}>{side}</Badge>
+        <Badge tone="neutral">{result.timeframe}</Badge>
+        <Badge tone="neutral">p_up {result.p_up.toFixed(2)}</Badge>
         <Badge tone={result.edge_atr >= 0 ? "long" : "short"}>edge {result.edge_atr >= 0 ? "+" : ""}{result.edge_atr.toFixed(2)} ATR</Badge>
       </div>
-      <div className="text-[12px] leading-relaxed text-paper/90 mb-3">{renderMarkdown(result.rationale)}</div>
+      <div className="text-[12px] leading-relaxed text-paper/90 mb-2">{renderMarkdown(result.rationale)}</div>
       {hasDraft && (
-        <div className="rounded-lg border border-line/60 bg-ink-900/60 p-3 mb-3">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-fog mb-2">Draft order</div>
-          <div className="flex gap-2">
-            <span className="text-[10px] text-fog">Side:</span>
-            <span className="font-mono text-[11px] text-paper">{side}</span>
-          </div>
-          <div className="flex gap-2">
-            <span className="text-[10px] text-fog">Draft:</span>
-            <span className="font-mono text-[11px] text-fog">{result.draft_id?.slice(0, 8)}…</span>
-          </div>
+        <div className="flex items-center justify-between gap-3 border-t border-line/60 pt-2">
+          <div className="font-mono text-[10px] text-fog">draft {result.draft_id?.slice(0,8)}… • {side}</div>
+          {onExecuteDraft && (
+            <button
+              onClick={() => onExecuteDraft(result.draft_id!)}
+              className="text-[10px] font-medium uppercase tracking-wide text-gold-400 hover:text-gold-300"
+            >
+              Execute
+            </button>
+          )}
         </div>
-      )}
-      {hasDraft && onExecuteDraft && (
-        <button
-          onClick={() => onExecuteDraft(result.draft_id!)}
-          className="text-[10px] underline underline-offset-4 hover:text-gold-400 text-gold-400"
-        >
-          Execute this trade
-        </button>
       )}
     </article>
   );
@@ -345,20 +337,16 @@ function ExecutionBubble({
 
   return (
     <article className="w-fit max-w-[88%] rounded-xl border px-4 py-3 border-line/70 bg-ink-850/70">
-      <Badge tone={tone}>
-        {result.ok ? "FILLED" : result.blocked ? "BLOCKED" : "EXECUTION"}
-      </Badge>{" "}
-      <span className="text-[10px] text-fog ml-2">{result.detail}</span>
-      {result.ticket && (
-        <div className="mt-1 flex gap-2">
-          <span className="text-[10px] text-fog">Ticket:</span>
-          <span className="font-mono text-[11px] text-paper">{result.ticket}</span>
-        </div>
-      )}
-      {result.fill_price != null && (
-        <div className="mt-1 flex gap-2">
-          <span className="text-[10px] text-fog">Fill:</span>
-          <span className="font-mono text-[11px] text-paper">{result.fill_price}</span>
+      <div className="mb-1 flex items-center gap-2">
+        <Badge tone={tone}>
+          {result.ok ? "FILLED" : result.blocked ? "BLOCKED" : "EXECUTION"}
+        </Badge>
+        <span className="text-[10px] text-fog">{result.detail}</span>
+      </div>
+      {(result.ticket || result.fill_price != null) && (
+        <div className="font-mono text-[10px] text-fog flex flex-wrap gap-x-3 gap-y-0.5">
+          {result.ticket && <span>ticket {result.ticket}</span>}
+          {result.fill_price != null && <span>fill {result.fill_price}</span>}
         </div>
       )}
       {result.blocked && result.block_reason && (
