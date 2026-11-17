@@ -256,19 +256,14 @@ function MessageBubble({
   }
 
   if (message.role === "tool") {
-    const tool = {
-      name: message.tool_name ?? "tool",
-      status: message.status ?? "completed",
-      latency_ms: message.latency_ms ?? null,
-      result_preview: message.tool_result ? JSON.stringify(message.tool_result) : null,
-      arguments: message.tool_args ?? null,
-    };
-    return <ToolRow tool={tool} />;
+    // Hide raw tool call rows to keep chat clean; structured analysis/execution
+    // bubbles are rendered above. Generic tool calls are logged in the Tools tab.
+    return null;
   }
 
   return (
     <article className={`w-fit max-w-[88%] rounded-xl border px-4 py-3 ${user ? "ml-auto border-gold-500/25 bg-gold-500/[0.08]" : "border-line/70 bg-ink-850/70"}`}>
-      <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-fog">{user ? "You" : "Agent"}</div>
+      {user && <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-fog">You</div>}
       <div className="text-[12px] leading-relaxed text-paper/90">{renderMarkdown(message.content)}</div>
     </article>
   );
@@ -309,7 +304,6 @@ function AnalysisBubble({
 
   return (
     <article className="w-fit max-w-[88%] rounded-xl border px-4 py-3 border-line/70 bg-ink-850/70">
-      <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-fog">Agent</div>
       <div className="mb-3">
         <Badge tone={tone}>{side}</Badge>{" "}
         <Badge tone="neutral">{result.timeframe}</Badge>{" "}
@@ -351,7 +345,6 @@ function ExecutionBubble({
 
   return (
     <article className="w-fit max-w-[88%] rounded-xl border px-4 py-3 border-line/70 bg-ink-850/70">
-      <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-fog">Agent</div>
       <Badge tone={tone}>
         {result.ok ? "FILLED" : result.blocked ? "BLOCKED" : "EXECUTION"}
       </Badge>{" "}
