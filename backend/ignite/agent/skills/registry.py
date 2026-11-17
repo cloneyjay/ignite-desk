@@ -51,7 +51,7 @@ class SkillRegistry:
             if scanned >= 50:
                 budget_exceeded = True
                 break
-            if time.monotonic() - start > 0.2:
+            if time.monotonic() - start > 1.0:
                 budget_exceeded = True
                 break
 
